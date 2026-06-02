@@ -17,17 +17,24 @@ class TelegramApi:
         token = request.match_info["token"]
         method = request.match_info["method"]
         payload = await self._read_payload(request)
-        event = await self._logger.write(
-            "bot_api_request",
-            {"token": token, "method": method, "payload": payload},
-        )
-        await self._storage.add_event(event)
 
         handler = getattr(self, f"_method_{method}", None)
         if handler is None:
-            return self._ok(True)
+            result = True
+        else:
+            result = await handler(payload)
 
-        result = await handler(payload)
+        event = await self._logger.write(
+            "bot_api_request",
+            {
+                "token": token,
+                "method": method,
+                "payload": payload,
+                "response": {"ok": True, "result": result},
+            },
+        )
+        await self._storage.add_event(event)
+
         return self._ok(result)
 
     async def create_message(self, request: web.Request) -> web.Response:

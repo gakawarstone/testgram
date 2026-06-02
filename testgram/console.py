@@ -17,7 +17,7 @@ class EventLogger:
             "payload": self._json_safe(payload),
         }
         line = json.dumps(event, ensure_ascii=False, sort_keys=True)
-        print(line, flush=True)
+        print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
 
         if self._log_file is not None:
             self._log_file.parent.mkdir(parents=True, exist_ok=True)
