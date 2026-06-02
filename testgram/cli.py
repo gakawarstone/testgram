@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from collections.abc import Sequence
 from pathlib import Path
+
+from aiohttp import ClientConnectorError, ClientResponseError
 
 from .commands.chat import chat_command
 from .commands.run import run_command
@@ -21,6 +24,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         asyncio.run(args.command(args))
     except KeyboardInterrupt:
         pass
+    except ClientConnectorError:
+        print(
+            f"error: could not connect to {args.url}. Is testgram serve running?",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+    except ClientResponseError as error:
+        print(
+            f"error: testgram server returned HTTP {error.status} for {error.request_info.real_url}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+    except TimeoutError:
+        print(f"error: request to {args.url} timed out", file=sys.stderr)
+        raise SystemExit(1) from None
     except ScenarioError as error:
         print(error)
         raise SystemExit(1) from error
@@ -59,4 +77,3 @@ def add_client_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--username", default="test_user")
     parser.add_argument("--first-name", default="Test")
     parser.add_argument("--timeout", default=15.0, type=float)
-
