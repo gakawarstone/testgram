@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+from collections.abc import Sequence
+from pathlib import Path
+
+from .commands.chat import chat_command
+from .commands.run import run_command
+from .commands.serve import serve_command
+from .scenario import ScenarioError
+
+
+DEFAULT_URL = "http://127.0.0.1:8081"
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    try:
+        asyncio.run(args.command(args))
+    except KeyboardInterrupt:
+        pass
+    except ScenarioError as error:
+        print(error)
+        raise SystemExit(1) from error
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="testgram",
+        description="Fake Telegram Bot API server for manual bot testing.",
+    )
+    subcommands = parser.add_subparsers(dest="command_name", required=True)
+
+    serve = subcommands.add_parser("serve", help="run the fake Bot API server")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", default=8081, type=int)
+    serve.add_argument("--log-file", type=Path)
+    serve.set_defaults(command=serve_command)
+
+    chat = subcommands.add_parser("chat", help="open an interactive chat")
+    add_client_args(chat)
+    chat.add_argument("--reset", action="store_true")
+    chat.set_defaults(command=chat_command)
+
+    run = subcommands.add_parser("run", help="run a scenario file")
+    run.add_argument("scenario", type=Path)
+    add_client_args(run)
+    run.add_argument("--no-reset", action="store_true")
+    run.set_defaults(command=run_command)
+
+    return parser.parse_args(argv)
+
+
+def add_client_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--url", default=DEFAULT_URL)
+    parser.add_argument("--chat-id", default=1, type=int)
+    parser.add_argument("--username", default="test_user")
+    parser.add_argument("--first-name", default="Test")
+    parser.add_argument("--timeout", default=15.0, type=float)
+

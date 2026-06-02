@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import argparse
-import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,34 +8,7 @@ from typing import Any
 from aiohttp import ClientSession
 import yaml
 
-from testgram.client import TestgramClient
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a testgram scenario")
-    parser.add_argument("scenario", type=Path)
-    parser.add_argument("--url", default="http://127.0.0.1:8081")
-    parser.add_argument("--chat-id", default=1, type=int)
-    parser.add_argument("--username", default="test_user")
-    parser.add_argument("--first-name", default="Test")
-    parser.add_argument("--timeout", default=15.0, type=float)
-    parser.add_argument("--no-reset", action="store_true")
-    return parser.parse_args()
-
-
-async def main() -> None:
-    args = parse_args()
-    scenario = Scenario.from_file(args.scenario, default_timeout=args.timeout)
-    client = TestgramClient(
-        base_url=args.url,
-        chat_id=args.chat_id,
-        username=args.username,
-        first_name=args.first_name,
-    )
-    runner = ScenarioRunner(client=client, scenario=scenario, reset=not args.no_reset)
-
-    async with ClientSession() as session:
-        await runner.run(session)
+from .client import TestgramClient
 
 
 @dataclass(slots=True)
@@ -101,6 +72,13 @@ class ScenarioRunner:
         print("scenario passed")
 
 
+async def run_scenario(client: TestgramClient, scenario: Scenario, reset: bool) -> None:
+    runner = ScenarioRunner(client=client, scenario=scenario, reset=reset)
+
+    async with ClientSession() as session:
+        await runner.run(session)
+
+
 @dataclass(slots=True)
 class Expectation:
     method: str | None
@@ -157,13 +135,3 @@ def optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except ScenarioError as error:
-        print(error)
-        raise SystemExit(1) from error
-    except KeyboardInterrupt:
-        pass

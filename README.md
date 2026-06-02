@@ -14,7 +14,7 @@ The first version supports echo/control mode:
 From the testgram repository root:
 
 ```bash
-uv run python main.py --host 127.0.0.1 --port 8081
+uv run testgram serve --host 127.0.0.1 --port 8081
 ```
 
 Run gkbot with:
@@ -35,7 +35,7 @@ uv run python bot/main.py
 Open an interactive chat:
 
 ```bash
-uv run python chat.py
+uv run testgram chat
 ```
 
 It behaves like:
@@ -49,13 +49,13 @@ bot: Привет вот список команд которые есть в б
 Run a scenario:
 
 ```bash
-uv run python scenario.py scenarios/list.yaml
+uv run testgram run scenarios/list.yaml
 ```
 
 Check that `/feed` gives the normal user a visible response:
 
 ```bash
-uv run python scenario.py scenarios/feed_responds.yaml
+uv run testgram run scenarios/feed_responds.yaml
 ```
 
 Scenario files are YAML:
