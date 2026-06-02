@@ -49,30 +49,24 @@ bot: Привет вот список команд которые есть в б
 Run a scenario:
 
 ```bash
-uv run python scenario.py scenarios/list.json
+uv run python scenario.py scenarios/list.yaml
 ```
 
 Check that `/feed` gives the normal user a visible response:
 
 ```bash
-uv run python scenario.py scenarios/feed_responds.json
+uv run python scenario.py scenarios/feed_responds.yaml
 ```
 
-Scenario files are JSON:
+Scenario files are YAML:
 
-```json
-{
-  "name": "list command",
-  "steps": [
-    {"message": "/list"},
-    {
-      "expect": {
-        "method": "sendMessage",
-        "text_contains": "/list"
-      }
-    }
-  ]
-}
+```yaml
+name: list command
+steps:
+  - message: /list
+  - expect:
+      method: sendMessage
+      text_contains: /list
 ```
 
 Inject a message:

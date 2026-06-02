@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import ClientSession
+import yaml
 
 from testgram.client import TestgramClient
 
@@ -48,7 +49,10 @@ class Scenario:
     @classmethod
     def from_file(cls, path: Path, default_timeout: float) -> Scenario:
         with path.open(encoding="utf-8") as scenario_file:
-            payload = json.load(scenario_file)
+            if path.suffix.lower() in {".yaml", ".yml"}:
+                payload = yaml.safe_load(scenario_file)
+            else:
+                payload = json.load(scenario_file)
 
         return cls(
             name=str(payload.get("name", path.stem)),
