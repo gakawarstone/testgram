@@ -1,0 +1,15 @@
+{
+  "name": "list command",
+  "timeout": 15,
+  "steps": [
+    {
+      "message": "/list"
+    },
+    {
+      "expect": {
+        "method": "sendMessage",
+        "text_contains": "/list"
+      }
+    }
+  ]
+}
