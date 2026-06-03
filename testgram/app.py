@@ -9,9 +9,9 @@ from .storage import MemoryStorage
 from .telegram_api import TelegramApi
 
 
-def create_app(log_file: Path | None = None) -> web.Application:
+def create_app(log_file: Path | None = None, quiet: bool = False) -> web.Application:
     storage = MemoryStorage()
-    logger = EventLogger(log_file=log_file)
+    logger = EventLogger(log_file=log_file, quiet=quiet)
     telegram_api = TelegramApi(storage=storage, logger=logger)
 
     app = web.Application()

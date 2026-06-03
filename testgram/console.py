@@ -7,8 +7,9 @@ from typing import Any
 
 
 class EventLogger:
-    def __init__(self, log_file: Path | None = None) -> None:
+    def __init__(self, log_file: Path | None = None, quiet: bool = False) -> None:
         self._log_file = log_file
+        self._quiet = quiet
 
     async def write(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         event = {
@@ -17,7 +18,8 @@ class EventLogger:
             "payload": self._json_safe(payload),
         }
         line = json.dumps(event, ensure_ascii=False, sort_keys=True)
-        print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
+        if not self._quiet:
+            print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
 
         if self._log_file is not None:
             self._log_file.parent.mkdir(parents=True, exist_ok=True)

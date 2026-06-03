@@ -46,11 +46,26 @@ bot: Привет вот список команд которые есть в б
 ...
 ```
 
-Run a scenario:
+Run a scenario with a hidden testgram server:
 
 ```bash
 uv run testgram run scenarios/list.yaml
 ```
+
+In a bot project, add `testgram.yaml` next to the bot command so scenarios do
+not duplicate setup:
+
+```yaml
+bot:
+  command: uv run python bot/main.py
+  env:
+    BOT_TOKEN: 123456:test
+    ADMIN_IDS: "999999"
+```
+
+`testgram run` discovers `testgram.yaml`, starts testgram on an automatic local
+port, starts the bot with `API_SERVER_URL` pointing at that server, runs the
+scenario, and then stops both processes.
 
 Check that `/feed` gives the normal user a visible response:
 

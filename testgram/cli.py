@@ -11,6 +11,7 @@ from aiohttp import ClientConnectorError, ClientResponseError
 from .commands.chat import chat_command
 from .commands.run import run_command
 from .commands.serve import serve_command
+from .config import ConfigError
 from .scenario import ScenarioError
 
 
@@ -26,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         pass
     except ClientConnectorError:
         print(
-            f"error: could not connect to {args.url}. Is testgram serve running?",
+            "error: could not connect to the testgram server",
             file=sys.stderr,
         )
         raise SystemExit(1) from None
@@ -37,10 +38,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         raise SystemExit(1) from None
     except TimeoutError:
-        print(f"error: request to {args.url} timed out", file=sys.stderr)
+        print("error: request to the testgram server timed out", file=sys.stderr)
         raise SystemExit(1) from None
     except ScenarioError as error:
         print(error)
+        raise SystemExit(1) from error
+    except ConfigError as error:
+        print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1) from error
 
 
@@ -64,15 +68,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     run = subcommands.add_parser("run", help="run a scenario file")
     run.add_argument("scenario", type=Path)
-    add_client_args(run)
+    run.add_argument("--config", type=Path)
+    run.add_argument("--host", default="127.0.0.1")
+    run.add_argument("--port", default=0, type=int)
+    run.add_argument("--log-file", type=Path)
+    run.add_argument("--no-bot", action="store_true")
+    add_client_args(run, include_url=False)
     run.add_argument("--no-reset", action="store_true")
     run.set_defaults(command=run_command)
 
     return parser.parse_args(argv)
 
 
-def add_client_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--url", default=DEFAULT_URL)
+def add_client_args(parser: argparse.ArgumentParser, include_url: bool = True) -> None:
+    if include_url:
+        parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--chat-id", default=1, type=int)
     parser.add_argument("--username", default="test_user")
     parser.add_argument("--first-name", default="Test")
