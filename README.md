@@ -52,6 +52,12 @@ Run a scenario with a hidden testgram server:
 uv run testgram run scenarios/list.yaml
 ```
 
+Run every scenario file in a directory:
+
+```bash
+uv run testgram run scenarios/
+```
+
 In a bot project, add `testgram.yaml` next to the bot command so scenarios do
 not duplicate setup:
 

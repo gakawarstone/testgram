@@ -66,7 +66,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     chat.add_argument("--reset", action="store_true")
     chat.set_defaults(command=chat_command)
 
-    run = subcommands.add_parser("run", help="run a scenario file")
+    run = subcommands.add_parser("run", help="run a scenario file or directory")
     run.add_argument("scenario", type=Path)
     run.add_argument("--config", type=Path)
     run.add_argument("--host", default="127.0.0.1")

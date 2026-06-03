@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import subprocess
+from pathlib import Path
 
 from aiohttp import ClientSession
 
@@ -12,9 +13,12 @@ from testgram.factory import create_client
 from testgram.scenario import Scenario, ScenarioError, run_scenario
 from testgram.server import RunningServer, start_server
 
+SCENARIO_SUFFIXES = {".json", ".yaml", ".yml"}
+
 
 async def run_command(args: argparse.Namespace) -> None:
     config = load_project_config(args.config, start=args.scenario)
+    scenario_paths = discover_scenarios(args.scenario)
     server = await start_server(
         host=args.host,
         port=args.port,
@@ -33,11 +37,28 @@ async def run_command(args: argparse.Namespace) -> None:
             username=args.username,
             first_name=args.first_name,
         )
-        scenario = Scenario.from_file(args.scenario, default_timeout=args.timeout)
-        await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
+        for scenario_path in scenario_paths:
+            scenario = Scenario.from_file(scenario_path, default_timeout=args.timeout)
+            await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
     finally:
         await bot.stop()
         await server.close()
+
+
+def discover_scenarios(path: Path) -> list[Path]:
+    if path.is_dir():
+        scenarios = sorted(
+            candidate
+            for candidate in path.iterdir()
+            if candidate.is_file() and candidate.suffix.lower() in SCENARIO_SUFFIXES
+        )
+        if not scenarios:
+            raise ScenarioError(f"{path}: no scenario files found")
+        return scenarios
+
+    if path.suffix.lower() not in SCENARIO_SUFFIXES:
+        raise ScenarioError(f"{path}: unsupported scenario file extension")
+    return [path]
 
 
 class BotProcess:
