@@ -62,6 +62,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     serve.set_defaults(command=serve_command)
 
     chat = subcommands.add_parser("chat", help="open an interactive chat")
+    chat.add_argument("--config", type=Path)
+    chat.add_argument("--no-bot", action="store_true")
     add_client_args(chat)
     chat.add_argument("--reset", action="store_true")
     chat.set_defaults(command=chat_command)

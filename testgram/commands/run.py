@@ -13,7 +13,7 @@ from testgram.config import ProjectConfig, load_project_config
 from testgram.factory import create_client
 from testgram.client import TestgramClient
 from testgram.scenario import Scenario, ScenarioError, run_scenario
-from testgram.server import RunningServer, start_server
+from testgram.server import start_server
 
 SCENARIO_SUFFIXES = {".json", ".yaml", ".yml"}
 
@@ -30,7 +30,7 @@ async def run_command(args: argparse.Namespace) -> None:
         log_file=args.log_file,
         quiet=True,
     )
-    bot = BotProcess(config=config, server=server, enabled=not args.no_bot)
+    bot = BotProcess(config=config, server_url=server.url, enabled=not args.no_bot)
 
     try:
         await wait_for_server(server.url)
@@ -108,11 +108,11 @@ class BotProcess:
     def __init__(
         self,
         config: ProjectConfig,
-        server: RunningServer,
+        server_url: str,
         enabled: bool,
     ) -> None:
         self._config = config
-        self._server = server
+        self._server_url = server_url
         self._enabled = enabled
         self._process: asyncio.subprocess.Process | None = None
         self._reused_existing = False
@@ -136,7 +136,7 @@ class BotProcess:
 
         env = os.environ.copy()
         env.update(self._config.bot.env)
-        env["API_SERVER_URL"] = self._server.url
+        env["API_SERVER_URL"] = self._server_url
 
         self._process = await asyncio.create_subprocess_shell(
             self._config.bot.command,

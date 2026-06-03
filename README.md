@@ -81,10 +81,14 @@ bot:
 
 `testgram run` discovers `testgram.yaml`, starts testgram on an automatic local
 port, starts the bot with `API_SERVER_URL` pointing at that server, runs the
-scenario, and then stops both processes.
+scenario, and then stops both processes. `testgram chat` also starts a hidden
+local testgram server when `--url` is not already running, discovers
+`testgram.yaml`, and starts the configured bot with `API_SERVER_URL` pointing at
+the chat server; pass `--no-bot` to chat without starting the bot.
 
 If the configured bot command is already running from the same project
-directory, `testgram run` will not start another copy or stop the existing one.
+directory, `testgram run` and `testgram chat` will not start another copy or
+stop the existing one.
 
 Check that `/feed` gives the normal user a visible response:
 
