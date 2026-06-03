@@ -58,6 +58,16 @@ Run every scenario file in a directory:
 uv run testgram run scenarios/
 ```
 
+Run multiple scenarios from a directory concurrently:
+
+```bash
+uv run testgram run scenarios/ --parallel 4
+```
+
+Parallel runs use separate chat ids for each scenario, starting at `--chat-id`.
+When reset is enabled, testgram resets once before the parallel batch instead of
+between scenarios.
+
 In a bot project, add `testgram.yaml` next to the bot command so scenarios do
 not duplicate setup:
 
@@ -72,6 +82,9 @@ bot:
 `testgram run` discovers `testgram.yaml`, starts testgram on an automatic local
 port, starts the bot with `API_SERVER_URL` pointing at that server, runs the
 scenario, and then stops both processes.
+
+If the configured bot command is already running from the same project
+directory, `testgram run` will not start another copy or stop the existing one.
 
 Check that `/feed` gives the normal user a visible response:
 

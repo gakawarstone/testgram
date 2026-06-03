@@ -75,6 +75,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run.add_argument("--no-bot", action="store_true")
     add_client_args(run, include_url=False)
     run.add_argument("--no-reset", action="store_true")
+    run.add_argument(
+        "--parallel",
+        default=1,
+        type=int,
+        help="run up to this many scenarios at the same time",
+    )
     run.set_defaults(command=run_command)
 
     return parser.parse_args(argv)

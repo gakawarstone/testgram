@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from aiohttp import ClientSession
@@ -72,18 +73,28 @@ class BotProcess:
         self._server = server
         self._enabled = enabled
         self._process: asyncio.subprocess.Process | None = None
+        self._reused_existing = False
 
     async def start(self) -> None:
         if not self._enabled or self._config.bot.command is None:
             return
 
-        env = os.environ.copy()
-        env.update(self._config.bot.env)
-        env["API_SERVER_URL"] = self._server.url
-
         cwd = None
         if self._config.path is not None:
             cwd = self._config.path.parent
+
+        if is_command_running(self._config.bot.command, cwd=cwd):
+            self._reused_existing = True
+            print(
+                f"bot command already running; not starting another: "
+                f"{self._config.bot.command}",
+                file=sys.stderr,
+            )
+            return
+
+        env = os.environ.copy()
+        env.update(self._config.bot.env)
+        env["API_SERVER_URL"] = self._server.url
 
         self._process = await asyncio.create_subprocess_shell(
             self._config.bot.command,
@@ -100,7 +111,11 @@ class BotProcess:
             )
 
     async def stop(self) -> None:
-        if self._process is None or self._process.returncode is not None:
+        if (
+            self._reused_existing
+            or self._process is None
+            or self._process.returncode is not None
+        ):
             return
 
         self._process.terminate()
@@ -109,6 +124,43 @@ class BotProcess:
         except TimeoutError:
             self._process.kill()
             await self._process.wait()
+
+
+def is_command_running(command: str, cwd: Path | None) -> bool:
+    proc_dir = Path("/proc")
+    if not proc_dir.exists():
+        return False
+
+    expected_command = normalize_command(command)
+    expected_cwd = cwd.resolve() if cwd is not None else None
+    current_pid = os.getpid()
+
+    for pid_dir in proc_dir.iterdir():
+        if not pid_dir.name.isdecimal() or int(pid_dir.name) == current_pid:
+            continue
+
+        try:
+            if expected_cwd is not None and pid_dir.joinpath("cwd").resolve() != expected_cwd:
+                continue
+
+            raw_cmdline = pid_dir.joinpath("cmdline").read_bytes()
+        except (FileNotFoundError, OSError, PermissionError):
+            continue
+
+        if not raw_cmdline:
+            continue
+
+        process_command = normalize_command(
+            raw_cmdline.replace(b"\0", b" ").decode(errors="replace")
+        )
+        if expected_command in process_command:
+            return True
+
+    return False
+
+
+def normalize_command(command: str) -> str:
+    return " ".join(command.split())
 
 
 async def wait_for_server(url: str) -> None:
