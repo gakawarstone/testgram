@@ -14,7 +14,7 @@ def create_app(log_file: Path | None = None, quiet: bool = False) -> web.Applica
     logger = EventLogger(log_file=log_file, quiet=quiet)
     telegram_api = TelegramApi(storage=storage, logger=logger)
 
-    app = web.Application()
+    app = web.Application(client_max_size=50 * 1024**2)
     app["storage"] = storage
     app["logger"] = logger
 
