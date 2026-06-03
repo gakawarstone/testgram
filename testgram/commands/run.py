@@ -11,6 +11,7 @@ from aiohttp import ClientSession
 
 from testgram.config import ProjectConfig, load_project_config
 from testgram.factory import create_client
+from testgram.client import TestgramClient
 from testgram.scenario import Scenario, ScenarioError, run_scenario
 from testgram.server import RunningServer, start_server
 
@@ -18,6 +19,9 @@ SCENARIO_SUFFIXES = {".json", ".yaml", ".yml"}
 
 
 async def run_command(args: argparse.Namespace) -> None:
+    if args.parallel < 1:
+        raise ScenarioError("--parallel must be at least 1")
+
     config = load_project_config(args.config, start=args.scenario)
     scenario_paths = discover_scenarios(args.scenario)
     server = await start_server(
@@ -38,12 +42,50 @@ async def run_command(args: argparse.Namespace) -> None:
             username=args.username,
             first_name=args.first_name,
         )
-        for scenario_path in scenario_paths:
-            scenario = Scenario.from_file(scenario_path, default_timeout=args.timeout)
-            await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
+        scenarios = [
+            Scenario.from_file(scenario_path, default_timeout=args.timeout)
+            for scenario_path in scenario_paths
+        ]
+        if args.parallel == 1:
+            for scenario in scenarios:
+                await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
+        else:
+            await run_scenarios_parallel(
+                client=client,
+                scenarios=scenarios,
+                parallel=args.parallel,
+                reset=not args.no_reset,
+            )
     finally:
         await bot.stop()
         await server.close()
+
+
+async def run_scenarios_parallel(
+    client: TestgramClient,
+    scenarios: list[Scenario],
+    parallel: int,
+    reset: bool,
+) -> None:
+    if reset:
+        async with ClientSession() as session:
+            await client.reset(session)
+
+    semaphore = asyncio.Semaphore(parallel)
+
+    async def run_one(index: int, scenario: Scenario) -> None:
+        async with semaphore:
+            scenario_client = TestgramClient(
+                base_url=client.base_url,
+                chat_id=client.chat_id + index,
+                username=client.username,
+                first_name=client.first_name,
+            )
+            await run_scenario(client=scenario_client, scenario=scenario, reset=False)
+
+    await asyncio.gather(
+        *(run_one(index, scenario) for index, scenario in enumerate(scenarios))
+    )
 
 
 def discover_scenarios(path: Path) -> list[Path]:
