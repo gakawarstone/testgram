@@ -14,22 +14,33 @@ from .client import TestgramClient
 @dataclass(slots=True)
 class Scenario:
     name: str
-    steps: list[dict[str, Any]]
+    steps: list[ScenarioStep]
     timeout: float
+    path: Path
 
     @classmethod
     def from_file(cls, path: Path, default_timeout: float) -> Scenario:
         with path.open(encoding="utf-8") as scenario_file:
             if path.suffix.lower() in {".yaml", ".yml"}:
-                payload = yaml.safe_load(scenario_file)
+                payload = yaml.load(scenario_file, Loader=SourceLineLoader)
             else:
                 payload = json.load(scenario_file)
 
         return cls(
             name=str(payload.get("name", path.stem)),
-            steps=list(payload["steps"]),
+            steps=[
+                ScenarioStep(payload=dict(step), line=source_line(step))
+                for step in payload["steps"]
+            ],
             timeout=float(payload.get("timeout", default_timeout)),
+            path=path,
         )
+
+
+@dataclass(slots=True)
+class ScenarioStep:
+    payload: dict[str, Any]
+    line: int | None
 
 
 class ScenarioRunner:
@@ -46,14 +57,17 @@ class ScenarioRunner:
         print(f"scenario: {self._scenario.name}")
 
         for step_number, step in enumerate(self._scenario.steps, start=1):
-            if "message" in step:
-                text = str(step["message"])
+            step_payload = step.payload
+            if "message" in step_payload:
+                text = str(step_payload["message"])
                 print(f"{step_number}. me: {text}")
                 await self._client.send_message(session, text)
                 continue
 
-            if "expect" in step:
-                expectation = Expectation.from_payload(step["expect"], self._scenario.timeout)
+            if "expect" in step_payload:
+                expectation = Expectation.from_payload(
+                    step_payload["expect"], self._scenario.timeout
+                )
                 events, seen_events = await self._client.wait_for_bot_events(
                     session=session,
                     seen_events=seen_events,
@@ -62,12 +76,18 @@ class ScenarioRunner:
                 match = expectation.find_match(events)
                 if match is None:
                     raise ScenarioError(
-                        f"{step_number}. expectation failed: {expectation.describe()}"
+                        f"{step_number}. expectation failed: {expectation.describe()}",
+                        path=self._scenario.path,
+                        line=step.line,
                     )
                 print(f"{step_number}. bot: {self._client.format_bot_reply(match)}")
                 continue
 
-            raise ScenarioError(f"{step_number}. unknown step: {step}")
+            raise ScenarioError(
+                f"{step_number}. unknown step: {step_payload}",
+                path=self._scenario.path,
+                line=step.line,
+            )
 
         print("scenario passed")
 
@@ -128,10 +148,58 @@ class Expectation:
 
 
 class ScenarioError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        path: Path | None = None,
+        line: int | None = None,
+    ) -> None:
+        self.message = message
+        self.path = path
+        self.line = line
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        if self.path is None:
+            return self.message
+        if self.line is None:
+            return f"{self.path}: {self.message}"
+        return f"{self.path}:{self.line}: {self.message}"
 
 
 def optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+class SourceMapping(dict[str, Any]):
+    def __init__(self, *args: Any, line: int | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.line = line
+
+
+class SourceLineLoader(yaml.SafeLoader):
+    pass
+
+
+def construct_source_mapping(
+    loader: SourceLineLoader,
+    node: yaml.nodes.MappingNode,
+) -> SourceMapping:
+    loader.flatten_mapping(node)
+    return SourceMapping(
+        loader.construct_pairs(node),
+        line=node.start_mark.line + 1,
+    )
+
+
+SourceLineLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    construct_source_mapping,
+)
+
+
+def source_line(value: Any) -> int | None:
+    return value.line if isinstance(value, SourceMapping) else None
