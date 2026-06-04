@@ -1,7 +1,8 @@
 name: list command
 timeout: 15
 steps:
-  - message: /list
+  - send:
+      text: /list
   - expect:
       method: sendMessage
       text_contains: /list

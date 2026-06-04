@@ -101,10 +101,27 @@ Scenario files are YAML:
 ```yaml
 name: list command
 steps:
-  - message: /list
+  - send:
+      text: /list
   - expect:
       method: sendMessage
       text_contains: /list
+```
+
+Send the same command multiple times, then assert the final chat state:
+
+```yaml
+steps:
+  - send:
+      text: /feed
+      times: 10
+      mode: concurrent
+
+  - expect_chat:
+      bot_messages:
+        count: 10
+        method: sendMessage
+      no_errors: true
 ```
 
 Inject a message:

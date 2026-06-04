@@ -1,6 +1,7 @@
 name: feed command responds to normal user
 timeout: 5
 steps:
-  - message: /feed
+  - send:
+      text: /feed
   - expect:
       method: sendMessage
