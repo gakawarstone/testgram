@@ -32,7 +32,9 @@ async def open_chat(client: TestgramClient, timeout: float, reset: bool) -> None
                 seen_events=seen_events,
                 timeout=timeout,
             )
+            if bot_events:
+                seen_events = bot_events[-1][0] + 1
             if not bot_events:
                 print("bot: <no response>")
-            for event in bot_events:
+            for _, event in bot_events:
                 print(f"bot: {client.format_bot_reply(event)}")

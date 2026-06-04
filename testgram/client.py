@@ -55,16 +55,18 @@ class TestgramClient:
         session: ClientSession,
         seen_events: int,
         timeout: float,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[tuple[int, dict[str, Any]]], int]:
         deadline = asyncio.get_running_loop().time() + timeout
 
         while asyncio.get_running_loop().time() < deadline:
             events = await self.get_events(session)
             new_bot_events = [
-                event for event in events[seen_events:] if self.is_bot_reply(event)
+                (index, event)
+                for index, event in enumerate(events[seen_events:], start=seen_events)
+                if self.is_bot_reply(event)
             ]
             if new_bot_events:
-                return new_bot_events, len(events)
+                return new_bot_events, seen_events
 
             seen_events = len(events)
             await asyncio.sleep(0.2)

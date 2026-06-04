@@ -39,11 +39,11 @@ async def ensure_chat_server(url: str) -> RunningServer | None:
         await wait_for_server(url)
         return None
     except ClientConnectorError as error:
-        pass
+        connector_error = error
 
     parsed = urlparse(url)
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
-        raise error
+        raise connector_error
 
     port = parsed.port or 80
     server = await start_server(

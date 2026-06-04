@@ -27,12 +27,26 @@ class Scenario:
             else:
                 payload = json.load(scenario_file)
 
+        if not isinstance(payload, dict):
+            raise ScenarioError("expected a scenario mapping", path=path)
+
+        raw_steps = payload.get("steps")
+        if not isinstance(raw_steps, list):
+            raise ScenarioError("steps must be a list", path=path)
+
+        steps = []
+        for index, step in enumerate(raw_steps, start=1):
+            if not isinstance(step, dict):
+                raise ScenarioError(
+                    f"{index}. step must be a mapping",
+                    path=path,
+                    line=source_line(step),
+                )
+            steps.append(ScenarioStep(payload=dict(step), line=source_line(step)))
+
         return cls(
             name=str(payload.get("name", path.stem)),
-            steps=[
-                ScenarioStep(payload=dict(step), line=source_line(step))
-                for step in payload["steps"]
-            ],
+            steps=steps,
             timeout=float(payload.get("timeout", default_timeout)),
             path=path,
         )
@@ -61,20 +75,34 @@ class ScenarioRunner:
         for step_number, step in enumerate(self._scenario.steps, start=1):
             step_payload = step.payload
             if "send" in step_payload:
-                send = SendAction.from_payload(step_payload["send"])
+                send = SendAction.from_payload(
+                    require_mapping(
+                        step_payload["send"],
+                        "send",
+                        self._scenario.path,
+                        step.line,
+                    )
+                )
                 print(f"{step_number}. me: {send.describe()}")
                 await send.run(client=self._client, session=session)
                 continue
 
             if "expect" in step_payload:
                 expectation = Expectation.from_payload(
-                    step_payload["expect"], self._scenario.timeout
+                    require_mapping(
+                        step_payload["expect"],
+                        "expect",
+                        self._scenario.path,
+                        step.line,
+                    ),
+                    self._scenario.timeout,
                 )
-                events, seen_events = await self._client.wait_for_bot_events(
+                indexed_events, seen_events = await self._client.wait_for_bot_events(
                     session=session,
                     seen_events=seen_events,
                     timeout=expectation.timeout,
                 )
+                events = [event for _, event in indexed_events]
                 match = expectation.find_match(events)
                 if match is None:
                     raise ScenarioError(
@@ -82,12 +110,19 @@ class ScenarioRunner:
                         path=self._scenario.path,
                         line=step.line,
                     )
+                seen_events = indexed_events[events.index(match)][0] + 1
                 print(f"{step_number}. bot: {self._client.format_bot_reply(match)}")
                 continue
 
             if "expect_chat" in step_payload:
                 expectation = ChatExpectation.from_payload(
-                    step_payload["expect_chat"], self._scenario.timeout
+                    require_mapping(
+                        step_payload["expect_chat"],
+                        "expect_chat",
+                        self._scenario.path,
+                        step.line,
+                    ),
+                    self._scenario.timeout,
                 )
                 events = await expectation.wait_for_match(
                     client=self._client,
@@ -169,6 +204,9 @@ class SendAction:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> SendAction:
+        if "text" not in payload:
+            raise ScenarioError("send.text is required")
+
         times = int(payload.get("times", 1))
         if times < 1:
             raise ScenarioError("send.times must be at least 1")
@@ -213,6 +251,8 @@ class ChatExpectation:
     ) -> ChatExpectation:
         bot_messages = None
         if "bot_messages" in payload:
+            if not isinstance(payload["bot_messages"], dict):
+                raise ScenarioError("expect_chat.bot_messages must be a mapping")
             bot_messages = ChatBotMessagesExpectation.from_payload(
                 payload["bot_messages"]
             )
@@ -379,6 +419,17 @@ def optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def require_mapping(
+    value: Any,
+    name: str,
+    path: Path | None,
+    line: int | None,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ScenarioError(f"{name} must be a mapping", path=path, line=line)
+    return value
 
 
 class SourceMapping(dict[str, Any]):
