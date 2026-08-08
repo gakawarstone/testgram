@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from .models import FakeChat, FakeMessage, FakeUpdate, FakeUser
+from .models import FakeCallbackQuery, FakeChat, FakeMessage, FakeUpdate, FakeUser
 
 
 class MemoryStorage:
@@ -41,6 +41,36 @@ class MemoryStorage:
             )
             update = FakeUpdate(update_id=self._next_update_id, message=message)
             self._next_message_id += 1
+            self._next_update_id += 1
+            self._updates.append(update)
+            self._condition.notify_all()
+            return update
+
+    async def create_callback_query(
+        self,
+        *,
+        data: str,
+        message: dict[str, Any],
+        chat_id: int,
+        username: str = "test_user",
+        first_name: str = "Test",
+    ) -> FakeUpdate:
+        async with self._condition:
+            callback_query = FakeCallbackQuery(
+                id=f"testgram-callback-{self._next_update_id}",
+                from_user=FakeUser(
+                    id=chat_id,
+                    username=username,
+                    first_name=first_name,
+                ),
+                message=message,
+                data=data,
+                chat_instance=f"testgram-chat-{chat_id}",
+            )
+            update = FakeUpdate(
+                update_id=self._next_update_id,
+                callback_query=callback_query,
+            )
             self._next_update_id += 1
             self._updates.append(update)
             self._condition.notify_all()

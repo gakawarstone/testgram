@@ -13,7 +13,13 @@ BOT_MESSAGE_METHODS = {
     "sendVideo",
     "sendAudio",
     "sendVoice",
+    "sendAnimation",
+    "sendSticker",
     "sendMediaGroup",
+    "editMessageText",
+    "editMessageCaption",
+    "editMessageMedia",
+    "editMessageReplyMarkup",
 }
 
 
@@ -49,6 +55,64 @@ class TestgramClient:
         }
         async with session.post(f"{self.base_url}/testgram/messages", json=payload) as response:
             response.raise_for_status()
+
+    async def click(
+        self,
+        session: ClientSession,
+        callback_data: str,
+        message_id: int | None = None,
+    ) -> int:
+        source = self._find_callback_source(
+            await self.get_events(session),
+            callback_data=callback_data,
+            message_id=message_id,
+        )
+        if source is None:
+            detail = f" in message {message_id}" if message_id is not None else ""
+            raise ValueError(f"callback_data {callback_data!r} was not found{detail}")
+
+        source_index, source_message = source
+        payload = {
+            "chat_id": self.chat_id,
+            "data": callback_data,
+            "message": source_message,
+            "username": self.username,
+            "first_name": self.first_name,
+        }
+        async with session.post(
+            f"{self.base_url}/testgram/callbacks", json=payload
+        ) as response:
+            response.raise_for_status()
+        return source_index
+
+    def _find_callback_source(
+        self,
+        events: list[dict[str, Any]],
+        *,
+        callback_data: str,
+        message_id: int | None,
+    ) -> tuple[int, dict[str, Any]] | None:
+        for event_index in range(len(events) - 1, -1, -1):
+            event = events[event_index]
+            if not self.is_bot_reply(event):
+                continue
+            event_payload = event.get("payload", {})
+            request_payload = event_payload.get("payload", {})
+            if not _contains_callback_data(
+                request_payload.get("reply_markup"), callback_data
+            ):
+                continue
+            result = event_payload.get("response", {}).get("result")
+            messages = result if isinstance(result, list) else [result]
+            for message in reversed(messages):
+                if not isinstance(message, dict):
+                    continue
+                if message_id is not None and message.get("message_id") != message_id:
+                    continue
+                source = dict(message)
+                source.setdefault("reply_markup", request_payload.get("reply_markup"))
+                return event_index, source
+        return None
 
     async def wait_for_bot_events(
         self,
@@ -99,3 +163,20 @@ class TestgramClient:
             return f"[{method}] {media}"
 
         return f"[{method}]"
+
+
+def _contains_callback_data(value: Any, callback_data: str) -> bool:
+    if isinstance(value, str):
+        try:
+            import json
+
+            value = json.loads(value)
+        except ValueError:
+            return False
+    if isinstance(value, dict):
+        if value.get("callback_data") == callback_data:
+            return True
+        return any(_contains_callback_data(item, callback_data) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_callback_data(item, callback_data) for item in value)
+    return False

@@ -56,6 +56,15 @@ async def run_command(args: argparse.Namespace) -> None:
                 parallel=args.parallel,
                 reset=not args.no_reset,
             )
+    except ScenarioError as error:
+        diagnostics = await bot.diagnostics()
+        if diagnostics and diagnostics not in error.message:
+            raise ScenarioError(
+                f"{error.message}\n\n{diagnostics}",
+                path=error.path,
+                line=error.line,
+            ) from error
+        raise
     finally:
         await bot.stop()
         await server.close()
@@ -105,6 +114,8 @@ def discover_scenarios(path: Path) -> list[Path]:
 
 
 class BotProcess:
+    _TAIL_BYTES = 32 * 1024
+
     def __init__(
         self,
         config: ProjectConfig,
@@ -116,6 +127,9 @@ class BotProcess:
         self._enabled = enabled
         self._process: asyncio.subprocess.Process | None = None
         self._reused_existing = False
+        self._stdout_tail = bytearray()
+        self._stderr_tail = bytearray()
+        self._reader_tasks: list[asyncio.Task[None]] = []
 
     async def start(self) -> None:
         if not self._enabled or self._config.bot.command is None:
@@ -142,22 +156,65 @@ class BotProcess:
             self._config.bot.command,
             cwd=cwd,
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
+        if self._process.stdout is not None:
+            self._reader_tasks.append(
+                asyncio.create_task(
+                    self._capture_stream(self._process.stdout, self._stdout_tail)
+                )
+            )
+        if self._process.stderr is not None:
+            self._reader_tasks.append(
+                asyncio.create_task(
+                    self._capture_stream(self._process.stderr, self._stderr_tail)
+                )
+            )
         await asyncio.sleep(0.2)
         if self._process.returncode is not None:
+            await self._finish_readers()
+            diagnostics = await self.diagnostics()
+            suffix = f"\n\n{diagnostics}" if diagnostics else ""
             raise ScenarioError(
                 f"bot command exited with code {self._process.returncode}: "
-                f"{self._config.bot.command}"
+                f"{self._config.bot.command}{suffix}"
             )
 
+    async def diagnostics(self) -> str:
+        await asyncio.sleep(0)
+        sections = []
+        if self._process is not None and self._process.returncode is not None:
+            sections.append(f"bot process exited with code {self._process.returncode}")
+        if self._stdout_tail:
+            sections.append(
+                "bot stdout (tail):\n" + self._stdout_tail.decode(errors="replace").rstrip()
+            )
+        if self._stderr_tail:
+            sections.append(
+                "bot stderr (tail):\n" + self._stderr_tail.decode(errors="replace").rstrip()
+            )
+        return "\n\n".join(sections)
+
+    async def _capture_stream(
+        self,
+        stream: asyncio.StreamReader,
+        destination: bytearray,
+    ) -> None:
+        while chunk := await stream.read(4096):
+            destination.extend(chunk)
+            if len(destination) > self._TAIL_BYTES:
+                del destination[: len(destination) - self._TAIL_BYTES]
+
+    async def _finish_readers(self) -> None:
+        if self._reader_tasks:
+            await asyncio.gather(*self._reader_tasks, return_exceptions=True)
+
     async def stop(self) -> None:
-        if (
-            self._reused_existing
-            or self._process is None
-            or self._process.returncode is not None
-        ):
+        if self._reused_existing or self._process is None:
+            return
+        if self._process.returncode is not None:
+            await self._finish_readers()
             return
 
         self._process.terminate()
@@ -166,6 +223,8 @@ class BotProcess:
         except TimeoutError:
             self._process.kill()
             await self._process.wait()
+        finally:
+            await self._finish_readers()
 
 
 def is_command_running(command: str, cwd: Path | None) -> bool:

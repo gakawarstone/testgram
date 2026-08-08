@@ -4,7 +4,7 @@ from aiohttp import ClientSession
 
 from testgram.client import TestgramClient
 
-from .actions import SendAction
+from .actions import ClickAction, SendAction
 from .errors import ScenarioError, require_mapping
 from .expectations import ChatExpectation, Expectation
 from .models import Scenario, ScenarioStep
@@ -54,6 +54,23 @@ class ScenarioRunner:
             await send.run(client=self._client, session=session)
             return seen_events
 
+        if "click" in step_payload:
+            click = ClickAction.from_payload(
+                require_mapping(
+                    step_payload["click"], "click", self._scenario.path, step.line
+                )
+            )
+            print(f"{step_number}. me: click {click.describe()}")
+            try:
+                source_event = await click.run(client=self._client, session=session)
+            except ScenarioError as error:
+                raise ScenarioError(
+                    f"{step_number}. click failed: {error}",
+                    path=self._scenario.path,
+                    line=step.line,
+                ) from error
+            return max(seen_events, source_event + 1)
+
         if "expect" in step_payload:
             expectation = Expectation.from_payload(
                 require_mapping(
@@ -61,21 +78,20 @@ class ScenarioRunner:
                 ),
                 self._scenario.timeout,
             )
-            indexed_events, seen_events = await self._client.wait_for_bot_events(
+            match = await expectation.wait_for_match(
+                client=self._client,
                 session=session,
                 seen_events=seen_events,
-                timeout=expectation.timeout,
             )
-            events = [event for _, event in indexed_events]
-            match = expectation.find_match(events)
             if match is None:
                 raise ScenarioError(
                     f"{step_number}. expectation failed: {expectation.describe()}",
                     path=self._scenario.path,
                     line=step.line,
                 )
-            print(f"{step_number}. bot: {self._client.format_bot_reply(match)}")
-            return indexed_events[events.index(match)][0] + 1
+            event_index, event = match
+            print(f"{step_number}. bot: {self._client.format_bot_reply(event)}")
+            return event_index + 1
 
         if "expect_chat" in step_payload:
             expectation = ChatExpectation.from_payload(

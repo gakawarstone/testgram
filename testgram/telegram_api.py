@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from aiohttp import web
+from aiohttp.web_request import FileField
 
 from .console import EventLogger
 from .storage import MemoryStorage
@@ -54,6 +55,29 @@ class TelegramApi:
         await self._storage.add_event(event)
         return self._ok(update.to_telegram())
 
+    async def create_callback_query(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        chat_id = int(payload.get("chat_id", 1))
+        data = str(payload["data"])
+        message = payload.get("message")
+        if not isinstance(message, dict):
+            raise web.HTTPBadRequest(text="message must be a mapping")
+
+        source_chat = message.get("chat")
+        if not isinstance(source_chat, dict) or str(source_chat.get("id")) != str(chat_id):
+            raise web.HTTPBadRequest(text="source message does not belong to chat_id")
+
+        update = await self._storage.create_callback_query(
+            data=data,
+            message=message,
+            chat_id=chat_id,
+            username=str(payload.get("username", "test_user")),
+            first_name=str(payload.get("first_name", "Test")),
+        )
+        event = await self._logger.write("callback_query", update.to_telegram())
+        await self._storage.add_event(event)
+        return self._ok(update.to_telegram())
+
     async def get_events(self, request: web.Request) -> web.Response:
         events = await self._storage.get_events()
         return self._ok(events)
@@ -87,8 +111,19 @@ class TelegramApi:
     async def _method_sendMessage(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._bot_message(payload, text=str(payload.get("text", "")))
 
-    async def _method_editMessageText(self, payload: dict[str, Any]) -> bool:
-        return True
+    async def _method_editMessageText(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._edited_bot_message(payload, text=payload.get("text", ""))
+
+    async def _method_editMessageCaption(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._edited_bot_message(payload, caption=payload.get("caption", ""))
+
+    async def _method_editMessageMedia(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._edited_bot_message(payload, media=payload.get("media"))
+
+    async def _method_editMessageReplyMarkup(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._edited_bot_message(payload)
 
     async def _method_deleteMessage(self, payload: dict[str, Any]) -> bool:
         return True
@@ -138,7 +173,7 @@ class TelegramApi:
                 "file_unique_id": "testgram-video-unique",
                 "width": 1,
                 "height": 1,
-                "duration": 1,
+                "duration": self._optional_int(payload.get("duration")) or 1,
             },
         )
 
@@ -149,7 +184,7 @@ class TelegramApi:
             audio={
                 "file_id": "testgram-audio",
                 "file_unique_id": "testgram-audio-unique",
-                "duration": 1,
+                "duration": self._optional_int(payload.get("duration")) or 1,
             },
         )
 
@@ -160,7 +195,34 @@ class TelegramApi:
             voice={
                 "file_id": "testgram-voice",
                 "file_unique_id": "testgram-voice-unique",
-                "duration": 1,
+                "duration": self._optional_int(payload.get("duration")) or 1,
+            },
+        )
+
+    async def _method_sendAnimation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._bot_message(
+            payload,
+            caption=payload.get("caption"),
+            animation={
+                "file_id": "testgram-animation",
+                "file_unique_id": "testgram-animation-unique",
+                "width": 1,
+                "height": 1,
+                "duration": self._optional_int(payload.get("duration")) or 1,
+            },
+        )
+
+    async def _method_sendSticker(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._bot_message(
+            payload,
+            sticker={
+                "file_id": "testgram-sticker",
+                "file_unique_id": "testgram-sticker-unique",
+                "width": 1,
+                "height": 1,
+                "is_animated": False,
+                "is_video": False,
+                "type": "regular",
             },
         )
 
@@ -190,6 +252,18 @@ class TelegramApi:
             "date": 1,
         }
         message.update({key: value for key, value in extra.items() if value is not None})
+        for key in ("reply_markup", "parse_mode"):
+            if key in payload:
+                message[key] = payload[key]
+        return message
+
+    async def _edited_bot_message(
+        self, payload: dict[str, Any], **extra: Any
+    ) -> dict[str, Any]:
+        message = await self._bot_message(payload, **extra)
+        message_id = self._optional_int(payload.get("message_id"))
+        if message_id is not None:
+            message["message_id"] = message_id
         return message
 
     async def _read_payload(self, request: web.Request) -> dict[str, Any]:
@@ -200,7 +274,25 @@ class TelegramApi:
             return {"value": payload}
 
         post = await request.post()
-        return dict(post.items())
+        return {
+            key: self._normalize_form_value(key, value)
+            for key, value in post.items()
+        }
+
+    def _normalize_form_value(self, key: str, value: Any) -> Any:
+        if isinstance(value, FileField):
+            return {
+                "filename": value.filename,
+                "content_type": value.content_type,
+            }
+        if key in {"reply_markup", "media", "entities", "caption_entities"}:
+            try:
+                import json
+
+                return json.loads(value)
+            except (TypeError, ValueError):
+                return value
+        return value
 
     def _ok(self, result: Any) -> web.Response:
         return web.json_response({"ok": True, "result": result})

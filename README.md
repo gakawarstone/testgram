@@ -108,6 +108,51 @@ steps:
       text_contains: /list
 ```
 
+Click an inline-keyboard button by its exact callback data. Testgram finds the
+most recent matching button in the scenario chat and injects a Telegram
+`callback_query` containing the original bot message, user, chat, and callback
+data:
+
+```yaml
+steps:
+  - send: {text: /settings}
+  - expect:
+      text: Settings
+      callback_data: settings:video
+  - click:
+      callback_data: settings:video
+  - expect:
+      text: Video settings
+```
+
+`expect` supports structured bot-message fields in addition to `method`, `text`,
+and `text_contains`: `reply_markup`, `callback_data`, `media_type`, `filename`,
+`duration`, `caption`, `parse_mode`, and `chat_id`. Use the one-based `order`
+field to require a particular next-message position:
+
+```yaml
+- expect:
+    order: 2
+    media_type: video
+    filename: result.mp4
+    duration: 12
+    caption: Ready
+    parse_mode: HTML
+    chat_id: 1
+```
+
+Chat-wide assertions can verify a sequence (unrelated messages may appear
+between the listed matches):
+
+```yaml
+- expect_chat:
+    bot_messages:
+      messages:
+        - {text: Preparing}
+        - {media_type: video, caption: Ready}
+    no_errors: true
+```
+
 Send the same command multiple times, then assert the final chat state:
 
 ```yaml
@@ -131,6 +176,9 @@ curl -X POST http://127.0.0.1:8081/testgram/messages \
   -H 'content-type: application/json' \
   -d '{"chat_id": 1, "text": "/start"}'
 ```
+
+Callbacks can also be injected directly with `POST /testgram/callbacks`; its
+JSON body requires `data`, `chat_id`, and the complete source `message`.
 
 Read events:
 

@@ -68,10 +68,31 @@ class FakeMessage:
 @dataclass(slots=True)
 class FakeUpdate:
     update_id: int
-    message: FakeMessage
+    message: FakeMessage | None = None
+    callback_query: FakeCallbackQuery | None = None
+
+    def to_telegram(self) -> dict[str, Any]:
+        update: dict[str, Any] = {"update_id": self.update_id}
+        if self.message is not None:
+            update["message"] = self.message.to_telegram()
+        if self.callback_query is not None:
+            update["callback_query"] = self.callback_query.to_telegram()
+        return update
+
+
+@dataclass(slots=True)
+class FakeCallbackQuery:
+    id: str
+    from_user: FakeUser
+    message: dict[str, Any]
+    data: str
+    chat_instance: str
 
     def to_telegram(self) -> dict[str, Any]:
         return {
-            "update_id": self.update_id,
-            "message": self.message.to_telegram(),
+            "id": self.id,
+            "from": self.from_user.to_telegram(),
+            "message": self.message,
+            "chat_instance": self.chat_instance,
+            "data": self.data,
         }

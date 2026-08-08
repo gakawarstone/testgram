@@ -51,3 +51,34 @@ class SendAction:
         if self.times == 1:
             return self.text
         return f"{self.text} ({self.times} times, {self.mode})"
+
+
+@dataclass(slots=True)
+class ClickAction:
+    callback_data: str
+    message_id: int | None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> ClickAction:
+        callback_data = payload.get("callback_data", payload.get("data"))
+        if callback_data is None:
+            raise ScenarioError("click.callback_data is required")
+        message_id = payload.get("message_id")
+        return cls(
+            callback_data=str(callback_data),
+            message_id=int(message_id) if message_id is not None else None,
+        )
+
+    async def run(self, client: TestgramClient, session: ClientSession) -> int:
+        try:
+            return await client.click(
+                session,
+                callback_data=self.callback_data,
+                message_id=self.message_id,
+            )
+        except ValueError as error:
+            raise ScenarioError(str(error)) from error
+
+    def describe(self) -> str:
+        suffix = f" in message {self.message_id}" if self.message_id is not None else ""
+        return f"callback_data={self.callback_data!r}{suffix}"
