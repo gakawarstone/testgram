@@ -86,9 +86,8 @@ local testgram server when `--url` is not already running, discovers
 `testgram.yaml`, and starts the configured bot with `API_SERVER_URL` pointing at
 the chat server; pass `--no-bot` to chat without starting the bot.
 
-If the configured bot command is already running from the same project
-directory, `testgram run` and `testgram chat` will not start another copy or
-stop the existing one.
+`testgram run` and `testgram chat` always start and own a fresh configured bot
+process. Pass `--no-bot` to use a bot managed outside Testgram instead.
 
 Check that `/feed` gives the normal user a visible response:
 
