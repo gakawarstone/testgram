@@ -62,6 +62,62 @@ class CallbackFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["payload"], updates[-1])
 
 
+class ReplyMarkupResponseTests(unittest.IsolatedAsyncioTestCase):
+    server: RunningServer
+
+    async def asyncSetUp(self) -> None:
+        self.server = await start_server("127.0.0.1", 0, quiet=True)
+
+    async def asyncTearDown(self) -> None:
+        await self.server.close()
+
+    async def test_reply_keyboard_is_not_returned_in_message(self) -> None:
+        reply_keyboard = {
+            "keyboard": [[{"text": "Books"}]],
+            "resize_keyboard": True,
+        }
+
+        async with ClientSession() as session:
+            async with session.post(
+                f"{self.server.url}/bot123/sendMessage",
+                json={
+                    "chat_id": 42,
+                    "text": "Choose a section",
+                    "reply_markup": reply_keyboard,
+                },
+            ) as response:
+                response.raise_for_status()
+                message = (await response.json())["result"]
+
+            events = await TestgramClient(
+                self.server.url, chat_id=42
+            ).get_events(session)
+
+        self.assertNotIn("reply_markup", message)
+        self.assertEqual(events[0]["payload"]["payload"]["reply_markup"], reply_keyboard)
+
+    async def test_inline_keyboard_is_returned_in_message(self) -> None:
+        inline_keyboard = {
+            "inline_keyboard": [
+                [{"text": "Open", "callback_data": "books:open"}]
+            ]
+        }
+
+        async with ClientSession() as session:
+            async with session.post(
+                f"{self.server.url}/bot123/sendMessage",
+                json={
+                    "chat_id": 42,
+                    "text": "Books",
+                    "reply_markup": inline_keyboard,
+                },
+            ) as response:
+                response.raise_for_status()
+                message = (await response.json())["result"]
+
+        self.assertEqual(message["reply_markup"], inline_keyboard)
+
+
 class StructuredExpectationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.event = {
