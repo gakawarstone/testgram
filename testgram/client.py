@@ -20,6 +20,7 @@ BOT_MESSAGE_METHODS = {
     "editMessageCaption",
     "editMessageMedia",
     "editMessageReplyMarkup",
+    "answerInlineQuery",
 }
 
 
@@ -35,6 +36,7 @@ class TestgramClient:
         self.chat_id = chat_id
         self.username = username
         self.first_name = first_name
+        self.chat_ids = {chat_id}
 
     async def reset(self, session: ClientSession) -> None:
         async with session.post(f"{self.base_url}/testgram/reset") as response:
@@ -47,13 +49,58 @@ class TestgramClient:
         return payload["result"]
 
     async def send_message(self, session: ClientSession, text: str) -> None:
+        await self.send(session, {"text": text})
+
+    async def send(
+        self, session: ClientSession, message: dict[str, Any]
+    ) -> None:
         payload = {
             "chat_id": self.chat_id,
-            "text": text,
             "username": self.username,
             "first_name": self.first_name,
+            **message,
         }
+        chat = payload.get("chat")
+        if isinstance(chat, dict) and chat.get("id") is not None:
+            self.chat_ids.add(int(chat["id"]))
+        else:
+            self.chat_ids.add(int(payload.get("chat_id", self.chat_id)))
         async with session.post(f"{self.base_url}/testgram/messages", json=payload) as response:
+            response.raise_for_status()
+
+    async def send_inline_query(
+        self, session: ClientSession, payload: dict[str, Any]
+    ) -> None:
+        request_payload = {
+            "user_id": self.chat_id,
+            "username": self.username,
+            "first_name": self.first_name,
+            **payload,
+        }
+        async with session.post(
+            f"{self.base_url}/testgram/inline-queries", json=request_payload
+        ) as response:
+            response.raise_for_status()
+
+    async def send_raw_update(
+        self, session: ClientSession, payload: dict[str, Any]
+    ) -> None:
+        for field in (
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "my_chat_member",
+            "chat_member",
+            "chat_join_request",
+        ):
+            value = payload.get(field)
+            chat = value.get("chat") if isinstance(value, dict) else None
+            if isinstance(chat, dict) and chat.get("id") is not None:
+                self.chat_ids.add(int(chat["id"]))
+        async with session.post(
+            f"{self.base_url}/testgram/updates", json=payload
+        ) as response:
             response.raise_for_status()
 
     async def click(
@@ -61,6 +108,7 @@ class TestgramClient:
         session: ClientSession,
         callback_data: str,
         message_id: int | None = None,
+        user: dict[str, Any] | None = None,
     ) -> int:
         source = self._find_callback_source(
             await self.get_events(session),
@@ -73,12 +121,14 @@ class TestgramClient:
 
         source_index, source_message = source
         payload = {
-            "chat_id": self.chat_id,
+            "chat_id": source_message.get("chat", {}).get("id", self.chat_id),
             "data": callback_data,
             "message": source_message,
             "username": self.username,
             "first_name": self.first_name,
         }
+        if user is not None:
+            payload["user"] = user
         async with session.post(
             f"{self.base_url}/testgram/callbacks", json=payload
         ) as response:
@@ -147,7 +197,7 @@ class TestgramClient:
 
         request_payload = payload.get("payload", {})
         chat_id = request_payload.get("chat_id")
-        return chat_id is None or str(chat_id) == str(self.chat_id)
+        return chat_id is None or any(str(chat_id) == str(item) for item in self.chat_ids)
 
     def format_bot_reply(self, event: dict[str, Any]) -> str:
         payload = event["payload"]

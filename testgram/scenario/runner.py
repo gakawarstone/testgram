@@ -4,7 +4,7 @@ from aiohttp import ClientSession
 
 from testgram.client import TestgramClient
 
-from .actions import ClickAction, SendAction
+from .actions import ClickAction, InlineQueryAction, SendAction, UpdateAction
 from .errors import ScenarioError, require_mapping
 from .expectations import ChatExpectation, Expectation
 from .models import Scenario, ScenarioStep
@@ -70,6 +70,29 @@ class ScenarioRunner:
                     line=step.line,
                 ) from error
             return max(seen_events, source_event + 1)
+
+        if "inline_query" in step_payload:
+            inline_query = InlineQueryAction.from_payload(
+                require_mapping(
+                    step_payload["inline_query"],
+                    "inline_query",
+                    self._scenario.path,
+                    step.line,
+                )
+            )
+            print(f"{step_number}. me: inline query {inline_query.describe()}")
+            await inline_query.run(client=self._client, session=session)
+            return seen_events
+
+        if "update" in step_payload:
+            update = UpdateAction.from_payload(
+                require_mapping(
+                    step_payload["update"], "update", self._scenario.path, step.line
+                )
+            )
+            print(f"{step_number}. me: update {update.describe()}")
+            await update.run(client=self._client, session=session)
+            return seen_events
 
         if "expect" in step_payload:
             expectation = Expectation.from_payload(

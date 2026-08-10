@@ -40,17 +40,53 @@ class TelegramApi:
 
     async def create_message(self, request: web.Request) -> web.Response:
         payload = await request.json()
-        chat_id = int(payload.get("chat_id", 1))
-        text = str(payload["text"])
+        chat_payload = self._optional_mapping(payload.get("chat"), "chat")
+        chat_id = int(chat_payload.get("id", payload.get("chat_id", 1)))
         username = str(payload.get("username", "test_user"))
         first_name = str(payload.get("first_name", "Test"))
-
-        update = await self._storage.create_user_message(
-            chat_id=chat_id,
-            text=text,
-            username=username,
-            first_name=first_name,
+        user_payload = self._optional_mapping(
+            self._first_present(payload, "user", "from_user", "from", "identity"),
+            "user",
         )
+        administrators = payload.get("administrators")
+        if administrators is not None and not isinstance(administrators, list):
+            raise web.HTTPBadRequest(text="administrators must be a list")
+
+        control_fields = {
+            "chat_id",
+            "username",
+            "first_name",
+            "user",
+            "from_user",
+            "from",
+            "identity",
+            "chat",
+            "administrators",
+        }
+        fields = {
+            key: value for key, value in payload.items() if key not in control_fields
+        }
+        for key in ("text", "caption"):
+            if key in fields:
+                fields[key] = str(fields[key])
+        self._normalize_incoming_media(fields)
+        if not any(key in fields for key in ("text", "document", "photo", "audio")):
+            raise web.HTTPBadRequest(
+                text="message requires one of text, document, photo, or audio"
+            )
+
+        try:
+            update = await self._storage.create_user_message(
+                chat_id=chat_id,
+                fields=fields,
+                username=username,
+                first_name=first_name,
+                user_payload=user_payload,
+                chat_payload=chat_payload,
+                administrators=administrators,
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
         event = await self._logger.write("user_message", update.to_telegram())
         await self._storage.add_event(event)
         return self._ok(update.to_telegram())
@@ -73,8 +109,52 @@ class TelegramApi:
             chat_id=chat_id,
             username=str(payload.get("username", "test_user")),
             first_name=str(payload.get("first_name", "Test")),
+            user_payload=self._optional_mapping(
+                self._first_present(payload, "user", "from_user", "from", "identity"),
+                "user",
+            ),
         )
         event = await self._logger.write("callback_query", update.to_telegram())
+        await self._storage.add_event(event)
+        return self._ok(update.to_telegram())
+
+    async def create_inline_query(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        if "query" not in payload:
+            raise web.HTTPBadRequest(text="query is required")
+        location = self._optional_mapping(payload.get("location"), "location")
+        user_payload = self._optional_mapping(
+            self._first_present(payload, "user", "from_user", "from", "identity"),
+            "user",
+        )
+        default_user_id = int(
+            user_payload.get("id", payload.get("user_id", payload.get("chat_id", 1)))
+        )
+        update = await self._storage.create_inline_query(
+            query=str(payload["query"]),
+            offset=str(payload.get("offset", "")),
+            query_id=(str(payload["id"]) if payload.get("id") is not None else None),
+            chat_type=(
+                str(payload["chat_type"])
+                if payload.get("chat_type") is not None
+                else None
+            ),
+            location=location or None,
+            user_payload=user_payload,
+            default_user_id=default_user_id,
+            username=str(payload.get("username", "test_user")),
+            first_name=str(payload.get("first_name", "Test")),
+        )
+        event = await self._logger.write("inline_query", update.to_telegram())
+        await self._storage.add_event(event)
+        return self._ok(update.to_telegram())
+
+    async def create_raw_update(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="update must be a mapping")
+        update = await self._storage.create_raw_update(payload)
+        event = await self._logger.write("telegram_update", update.to_telegram())
         await self._storage.add_event(event)
         return self._ok(update.to_telegram())
 
@@ -235,6 +315,11 @@ class TelegramApi:
     async def _method_answerInlineQuery(self, payload: dict[str, Any]) -> bool:
         return True
 
+    async def _method_getChatAdministrators(
+        self, payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return await self._storage.get_chat_administrators(payload.get("chat_id"))
+
     async def _bot_message(self, payload: dict[str, Any], **extra: Any) -> dict[str, Any]:
         chat_id = self._optional_int(payload.get("chat_id")) or 1
         message = {
@@ -301,3 +386,48 @@ class TelegramApi:
         if value is None or value == "":
             return None
         return int(value)
+
+    def _optional_mapping(self, value: Any, name: str) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise web.HTTPBadRequest(text=f"{name} must be a mapping")
+        return value
+
+    def _first_present(self, payload: dict[str, Any], *keys: str) -> Any:
+        return next((payload[key] for key in keys if key in payload), None)
+
+    def _normalize_incoming_media(self, fields: dict[str, Any]) -> None:
+        if "document" in fields:
+            fields["document"] = self._media_object(
+                fields["document"], "document", include_dimensions=False
+            )
+        if "audio" in fields:
+            audio = self._media_object(
+                fields["audio"], "audio", include_dimensions=False
+            )
+            audio.setdefault("duration", 1)
+            fields["audio"] = audio
+        if "photo" in fields:
+            photo = fields["photo"]
+            items = photo if isinstance(photo, list) else [photo]
+            fields["photo"] = [
+                self._media_object(item, "photo", include_dimensions=True)
+                for item in items
+            ]
+
+    def _media_object(
+        self, value: Any, media_type: str, *, include_dimensions: bool
+    ) -> dict[str, Any]:
+        if isinstance(value, str):
+            media = {"file_id": value}
+        elif isinstance(value, dict):
+            media = dict(value)
+        else:
+            raise web.HTTPBadRequest(text=f"{media_type} must be a mapping or string")
+        media.setdefault("file_id", f"testgram-{media_type}")
+        media.setdefault("file_unique_id", f"testgram-{media_type}-unique")
+        if include_dimensions:
+            media.setdefault("width", 1)
+            media.setdefault("height", 1)
+        return media

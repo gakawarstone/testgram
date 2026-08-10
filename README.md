@@ -107,6 +107,74 @@ steps:
       text_contains: /list
 ```
 
+`send` can inject text, document, photo, or audio messages. Set `user` and
+`chat` to override the scenario client's identity and private chat. A group
+message may also define the members that the fake Bot API returns from
+`getChatAdministrators`:
+
+```yaml
+steps:
+  - send:
+      document:
+        file_id: test-sheet
+        file_unique_id: test-sheet-unique
+        file_name: input.xlsx
+        mime_type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      caption: Import this
+      user: {id: 42, first_name: Alice, username: alice}
+      chat: {id: -100, type: supergroup, title: Test group}
+      administrators:
+        - {id: 7, first_name: Owner, username: owner, status: creator}
+        - user: {id: 8, first_name: Mod, username: mod}
+          status: administrator
+  - expect:
+      chat_id: -100
+      text_contains: Imported
+```
+
+Photo and audio inputs use the same Telegram-shaped fields. Testgram fills in
+missing fake file identifiers, photo dimensions, and audio duration:
+
+```yaml
+- send:
+    photo: {file_id: avatar, width: 640, height: 480}
+    caption: A photo
+- send:
+    audio: {file_id: sample, duration: 12, title: Sample}
+```
+
+Inject an inline query with a configurable sender:
+
+```yaml
+- inline_query:
+    id: query-1
+    query: lst red blue
+    offset: ""
+    chat_type: group
+    user: {id: 77, first_name: Inline, username: inline_user}
+- expect:
+    method: answerInlineQuery
+```
+
+For Telegram update kinds without a convenience action, `update` accepts the
+raw fields below `update_id`; Testgram assigns the update id. This can model
+updates such as `chat_member`, `my_chat_member`, `channel_post`, or
+`chosen_inline_result`:
+
+```yaml
+- update:
+    my_chat_member:
+      chat: {id: -100, type: supergroup, title: Test group}
+      from: {id: 42, is_bot: false, first_name: Alice}
+      date: 1
+      old_chat_member:
+        status: left
+        user: {id: 999001, is_bot: true, first_name: Testgram Bot}
+      new_chat_member:
+        status: member
+        user: {id: 999001, is_bot: true, first_name: Testgram Bot}
+```
+
 Click an inline-keyboard button by its exact callback data. Testgram finds the
 most recent matching button in the scenario chat and injects a Telegram
 `callback_query` containing the original bot message, user, chat, and callback
@@ -178,6 +246,8 @@ curl -X POST http://127.0.0.1:8081/testgram/messages \
 
 Callbacks can also be injected directly with `POST /testgram/callbacks`; its
 JSON body requires `data`, `chat_id`, and the complete source `message`.
+Inline queries use `POST /testgram/inline-queries`, and arbitrary Telegram
+update fields use `POST /testgram/updates`.
 
 Read events:
 
