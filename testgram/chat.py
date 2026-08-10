@@ -7,8 +7,20 @@ from aiohttp import ClientSession
 from .client import TestgramClient
 
 
-async def open_chat(client: TestgramClient, timeout: float, reset: bool) -> None:
+async def open_chat(
+    client: TestgramClient,
+    timeout: float,
+    reset: bool,
+    polling_after: int | None = None,
+) -> None:
     async with ClientSession() as session:
+        if polling_after is not None:
+            await client.wait_for_polling(
+                session,
+                timeout=timeout,
+                after=polling_after,
+            )
+
         if reset:
             await client.reset(session)
 

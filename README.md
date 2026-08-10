@@ -51,3 +51,16 @@ testgram run scenarios/start.yaml
 Testgram starts the fake API and your bot, injects the scenario updates, checks
 the responses, then stops both processes. Use `testgram chat` for interactive
 testing or `testgram run scenarios/ --parallel 4` to run a suite concurrently.
+
+## Interactive chat readiness
+
+When `testgram chat` starts a configured bot, it waits for that process to begin
+a new `getUpdates` long poll before showing the prompt and establishing the chat
+event baseline. Messages sent during bot startup—such as an admin notification
+that the bot started—are therefore treated as existing chat activity, not as the
+response to the first command entered by the user.
+
+Testgram tracks polling generations, so an earlier bot poll on a reused server
+does not make the new process appear ready. Readiness uses the configured
+`--timeout`. Passing `--no-bot` skips the readiness wait because Testgram does
+not own the external bot's lifecycle.

@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from urllib.parse import urlparse
 
-from aiohttp import ClientConnectorError
+from aiohttp import ClientConnectorError, ClientSession
 
 from testgram.chat import open_chat
 from testgram.commands.run import BotProcess
@@ -26,8 +26,17 @@ async def chat_command(args: argparse.Namespace) -> None:
         first_name=args.first_name,
     )
     try:
-        await bot.start()
-        await open_chat(client=client, timeout=args.timeout, reset=args.reset)
+        polling_count = None
+        if not args.no_bot and config.bot.command is not None:
+            async with ClientSession() as session:
+                polling_count = await client.get_polling_count(session)
+        bot_started = await bot.start()
+        await open_chat(
+            client=client,
+            timeout=args.timeout,
+            reset=args.reset,
+            polling_after=polling_count if bot_started else None,
+        )
     finally:
         await bot.stop()
         if server is not None:

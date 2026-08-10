@@ -46,6 +46,27 @@ class TestgramClient:
             payload = await response.json()
         return payload["result"]
 
+    async def get_polling_count(self, session: ClientSession) -> int:
+        async with session.get(f"{self.base_url}/testgram/polling") as response:
+            response.raise_for_status()
+            payload = await response.json()
+        return int(payload["result"]["count"])
+
+    async def wait_for_polling(
+        self,
+        session: ClientSession,
+        timeout: float,
+        after: int = 0,
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+
+        while asyncio.get_running_loop().time() < deadline:
+            if await self.get_polling_count(session) > after:
+                return
+            await asyncio.sleep(0.05)
+
+        raise TimeoutError("bot did not begin polling")
+
     async def send_message(self, session: ClientSession, text: str) -> None:
         payload = {
             "chat_id": self.chat_id,

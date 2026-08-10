@@ -9,11 +9,18 @@ from .models import FakeCallbackQuery, FakeChat, FakeMessage, FakeUpdate, FakeUs
 class MemoryStorage:
     def __init__(self) -> None:
         self._condition = asyncio.Condition()
+        self._polling_count = 0
         self._events: list[dict[str, Any]] = []
         self._updates: list[FakeUpdate] = []
         self._next_update_id = 1
         self._next_message_id = 1
         self._next_bot_message_id = 10_000
+
+    def mark_polling_started(self) -> None:
+        self._polling_count += 1
+
+    def polling_count(self) -> int:
+        return self._polling_count
 
     async def add_event(self, event: dict[str, Any]) -> None:
         async with self._condition:

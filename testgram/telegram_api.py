@@ -91,6 +91,10 @@ class TelegramApi:
     async def health(self, request: web.Request) -> web.Response:
         return self._ok({"status": "ok"})
 
+    async def polling_status(self, request: web.Request) -> web.Response:
+        count = self._storage.polling_count()
+        return self._ok({"started": count > 0, "count": count})
+
     async def _method_getMe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": 999_001,
@@ -103,6 +107,8 @@ class TelegramApi:
         }
 
     async def _method_getUpdates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        # Record readiness before entering a potentially long-running poll.
+        self._storage.mark_polling_started()
         offset = self._optional_int(payload.get("offset"))
         limit = self._optional_int(payload.get("limit")) or 100
         timeout = self._optional_int(payload.get("timeout")) or 0

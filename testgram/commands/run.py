@@ -129,9 +129,9 @@ class BotProcess:
         self._stderr_tail = bytearray()
         self._reader_tasks: list[asyncio.Task[None]] = []
 
-    async def start(self) -> None:
+    async def start(self) -> bool:
         if not self._enabled or self._config.bot.command is None:
-            return
+            return False
 
         cwd = None
         if self._config.path is not None:
@@ -169,6 +169,7 @@ class BotProcess:
                 f"bot command exited with code {self._process.returncode}: "
                 f"{self._config.bot.command}{suffix}"
             )
+        return True
 
     async def diagnostics(self) -> str:
         await asyncio.sleep(0)

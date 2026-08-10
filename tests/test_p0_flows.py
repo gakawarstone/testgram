@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from aiohttp import ClientSession
 
+from testgram.chat import open_chat
 from testgram.client import TestgramClient
 from testgram.scenario.expectations import ChatBotMessagesExpectation, MessageMatcher
 from testgram.server import RunningServer, start_server
@@ -60,6 +65,86 @@ class CallbackFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(callback["message"]["chat"]["id"], 42)
         self.assertEqual(events[1]["type"], "callback_query")
         self.assertEqual(events[1]["payload"], updates[-1])
+
+    async def test_polling_readiness_precedes_chat_event_baseline(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async with ClientSession() as session:
+            async with session.post(
+                f"{self.server.url}/bot-old/getUpdates",
+                json={},
+            ) as response:
+                response.raise_for_status()
+            polling_count = await client.get_polling_count(session)
+
+            async with session.post(
+                f"{self.server.url}/bot123/sendMessage",
+                json={"chat_id": 42, "text": "bot started"},
+            ) as response:
+                response.raise_for_status()
+
+            async def long_poll() -> None:
+                async with session.post(
+                    f"{self.server.url}/bot123/getUpdates",
+                    json={"timeout": 2},
+                ) as response:
+                    response.raise_for_status()
+                    await response.json()
+
+            poll_task = asyncio.create_task(long_poll())
+            await client.wait_for_polling(
+                session,
+                timeout=0.5,
+                after=polling_count,
+            )
+
+            self.assertFalse(poll_task.done())
+            events = await client.get_events(session)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(
+                events[-1]["payload"]["payload"]["text"],
+                "bot started",
+            )
+
+            await client.send_message(session, "/list")
+            await poll_task
+
+    async def test_chat_does_not_treat_startup_message_as_command_response(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async def run_bot() -> None:
+            async with ClientSession() as session:
+                async with session.post(
+                    f"{self.server.url}/bot123/sendMessage",
+                    json={"chat_id": 42, "text": "bot started"},
+                ) as response:
+                    response.raise_for_status()
+                async with session.post(
+                    f"{self.server.url}/bot123/getUpdates",
+                    json={"timeout": 2},
+                ) as response:
+                    response.raise_for_status()
+                    await response.json()
+                async with session.post(
+                    f"{self.server.url}/bot123/sendMessage",
+                    json={"chat_id": 42, "text": "the /list response"},
+                ) as response:
+                    response.raise_for_status()
+
+        bot_task = asyncio.create_task(run_bot())
+        output = io.StringIO()
+        with patch("builtins.input", side_effect=["/list", "/exit"]):
+            with redirect_stdout(output):
+                await open_chat(
+                    client,
+                    timeout=1,
+                    reset=False,
+                    polling_after=0,
+                )
+        await bot_task
+
+        self.assertNotIn("bot: bot started", output.getvalue())
+        self.assertIn("bot: the /list response", output.getvalue())
 
 
 class StructuredExpectationTests(unittest.TestCase):
