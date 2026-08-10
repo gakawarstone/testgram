@@ -138,16 +138,19 @@ class TestgramClient:
         return [], seen_events
 
     def is_bot_reply(self, event: dict[str, Any]) -> bool:
-        if event.get("type") != "bot_api_request":
+        if not self.is_bot_message(event):
             return False
 
         payload = event.get("payload", {})
-        if payload.get("method") not in BOT_MESSAGE_METHODS:
-            return False
-
         request_payload = payload.get("payload", {})
         chat_id = request_payload.get("chat_id")
         return chat_id is None or str(chat_id) == str(self.chat_id)
+
+    def is_bot_message(self, event: dict[str, Any]) -> bool:
+        if event.get("type") != "bot_api_request":
+            return False
+        payload = event.get("payload", {})
+        return payload.get("method") in BOT_MESSAGE_METHODS
 
     def format_bot_reply(self, event: dict[str, Any]) -> str:
         payload = event["payload"]
