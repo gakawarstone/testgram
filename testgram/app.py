@@ -22,6 +22,8 @@ def create_app(log_file: Path | None = None, quiet: bool = False) -> web.Applica
     app.router.add_get("/testgram/events", telegram_api.get_events)
     app.router.add_post("/testgram/messages", telegram_api.create_message)
     app.router.add_post("/testgram/callbacks", telegram_api.create_callback_query)
+    app.router.add_post("/testgram/inline-queries", telegram_api.create_inline_query)
+    app.router.add_post("/testgram/updates", telegram_api.create_raw_update)
     app.router.add_post("/testgram/reset", telegram_api.reset)
     app.router.add_get("/testgram/health", telegram_api.health)
 
