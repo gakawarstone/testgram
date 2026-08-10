@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -55,17 +56,38 @@ class SendAction:
 
 @dataclass(slots=True)
 class ClickAction:
-    callback_data: str
+    callback_data: str | None
+    callback_data_regex: str | None
+    button_text: str | None
     message_id: int | None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ClickAction:
         callback_data = payload.get("callback_data", payload.get("data"))
-        if callback_data is None:
-            raise ScenarioError("click.callback_data is required")
+        callback_data_regex = payload.get(
+            "callback_data_regex", payload.get("data_regex")
+        )
+        button_text = payload.get("button_text")
+        selectors = [callback_data, callback_data_regex, button_text]
+        if sum(selector is not None for selector in selectors) != 1:
+            raise ScenarioError(
+                "click requires exactly one of callback_data, "
+                "callback_data_regex, or button_text"
+            )
+        if callback_data_regex is not None:
+            try:
+                re.compile(str(callback_data_regex))
+            except re.error as error:
+                raise ScenarioError(
+                    f"click.callback_data_regex is invalid: {error}"
+                ) from error
         message_id = payload.get("message_id")
         return cls(
-            callback_data=str(callback_data),
+            callback_data=str(callback_data) if callback_data is not None else None,
+            callback_data_regex=(
+                str(callback_data_regex) if callback_data_regex is not None else None
+            ),
+            button_text=str(button_text) if button_text is not None else None,
             message_id=int(message_id) if message_id is not None else None,
         )
 
@@ -75,10 +97,18 @@ class ClickAction:
                 session,
                 callback_data=self.callback_data,
                 message_id=self.message_id,
+                callback_data_regex=self.callback_data_regex,
+                button_text=self.button_text,
             )
         except ValueError as error:
             raise ScenarioError(str(error)) from error
 
     def describe(self) -> str:
+        if self.callback_data is not None:
+            selector = f"callback_data={self.callback_data!r}"
+        elif self.callback_data_regex is not None:
+            selector = f"callback_data_regex={self.callback_data_regex!r}"
+        else:
+            selector = f"button_text={self.button_text!r}"
         suffix = f" in message {self.message_id}" if self.message_id is not None else ""
-        return f"callback_data={self.callback_data!r}{suffix}"
+        return selector + suffix
