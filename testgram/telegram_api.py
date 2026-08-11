@@ -91,6 +91,39 @@ class TelegramApi:
     async def health(self, request: web.Request) -> web.Response:
         return self._ok({"status": "ok"})
 
+    async def update_consumed(self, request: web.Request) -> web.Response:
+        update_id = int(request.match_info["update_id"])
+        timeout = float(request.query.get("timeout", 0))
+        status = await self._storage.update_status(update_id)
+        if status is None:
+            raise web.HTTPNotFound(text=f"update {update_id} was not found")
+        if not status["consumed"] and timeout > 0:
+            status["consumed"] = await self._storage.wait_for_update_consumed(
+                update_id, timeout
+            )
+        return self._ok(status)
+
+    async def get_time(self, request: web.Request) -> web.Response:
+        if "until" in request.query:
+            try:
+                target = float(request.query["until"])
+                timeout = float(request.query.get("timeout", 30))
+            except ValueError as error:
+                raise web.HTTPBadRequest(text=str(error)) from error
+            return self._ok(await self._storage.wait_until(target, timeout))
+        return self._ok(await self._storage.clock())
+
+    async def advance_time(self, request: web.Request) -> web.Response:
+        payload = await request.json()
+        try:
+            seconds = float(payload["seconds"])
+            clock = await self._storage.advance_clock(seconds)
+        except (KeyError, TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        event = await self._logger.write("time_advanced", {"seconds": seconds, **clock})
+        await self._storage.add_event(event)
+        return self._ok(clock)
+
     async def _method_getMe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": 999_001,
@@ -249,7 +282,7 @@ class TelegramApi:
                 "id": chat_id,
                 "type": "private",
             },
-            "date": 1,
+            "date": int(await self._storage.now()),
         }
         message.update({key: value for key, value in extra.items() if value is not None})
         for key in ("reply_markup", "parse_mode"):

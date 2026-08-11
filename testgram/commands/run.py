@@ -140,6 +140,7 @@ class BotProcess:
         env = os.environ.copy()
         env.update(self._config.bot.env)
         env["API_SERVER_URL"] = self._server_url
+        env["TESTGRAM_TIME_URL"] = f"{self._server_url}/testgram/time"
 
         self._process = await asyncio.create_subprocess_shell(
             self._config.bot.command,

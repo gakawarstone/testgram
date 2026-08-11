@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from aiohttp import ClientSession
 
 from testgram.client import TestgramClient
-from testgram.scenario.expectations import ChatBotMessagesExpectation, MessageMatcher
+from testgram.scenario.expectations import (
+    ChatBotMessagesExpectation,
+    MessageMatcher,
+    NoneExpectation,
+)
 from testgram.server import RunningServer, start_server
 
 
@@ -60,6 +65,70 @@ class CallbackFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(callback["message"]["chat"]["id"], 42)
         self.assertEqual(events[1]["type"], "callback_query")
         self.assertEqual(events[1]["payload"], updates[-1])
+
+    async def test_update_is_consumed_only_after_offset_advances(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async with ClientSession() as session:
+            update_id = await client.send_message(session, "/start")
+            waiter = asyncio.create_task(
+                client.wait_for_update_consumed(session, update_id, timeout=1)
+            )
+
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates", json={}
+            ) as response:
+                response.raise_for_status()
+                self.assertEqual(
+                    (await response.json())["result"][0]["update_id"], update_id
+                )
+            await asyncio.sleep(0)
+            self.assertFalse(waiter.done())
+
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates",
+                json={"offset": update_id + 1},
+            ) as response:
+                response.raise_for_status()
+            await waiter
+
+    async def test_virtual_time_controls_message_dates(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async with ClientSession() as session:
+            async with session.get(f"{self.server.url}/testgram/time") as response:
+                before = (await response.json())["result"]
+            advanced = await client.advance_time(session, 90)
+            update_id = await client.send_message(session, "later")
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates",
+                json={"offset": update_id},
+            ) as response:
+                update = (await response.json())["result"][0]
+
+        self.assertEqual(advanced["unix"], before["unix"] + 90)
+        self.assertEqual(update["message"]["date"], int(advanced["unix"]))
+
+    async def test_expect_none_observes_the_whole_window(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+        expectation = NoneExpectation.from_payload(
+            {"text": "forbidden", "duration": 0.3}, default_timeout=1
+        )
+
+        async with ClientSession() as session:
+            async def delayed_reply() -> None:
+                await asyncio.sleep(0.1)
+                async with session.post(
+                    f"{self.server.url}/bot123/sendMessage",
+                    json={"chat_id": 42, "text": "forbidden"},
+                ) as response:
+                    response.raise_for_status()
+
+            task = asyncio.create_task(delayed_reply())
+            violation, _ = await expectation.observe(client, session, seen_events=0)
+            await task
+
+        self.assertIsNotNone(violation)
 
 
 class StructuredExpectationTests(unittest.TestCase):
