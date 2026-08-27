@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
-from time import time
 from typing import Any
 
 from .models import FakeCallbackQuery, FakeChat, FakeMessage, FakeUpdate, FakeUser
@@ -17,8 +15,6 @@ class MemoryStorage:
         self._next_update_id = 1
         self._next_message_id = 1
         self._next_bot_message_id = 10_000
-        self._now = float(time())
-        self._clock_revision = 0
 
     async def add_event(self, event: dict[str, Any]) -> None:
         async with self._condition:
@@ -43,7 +39,6 @@ class MemoryStorage:
                 chat=chat,
                 text=text,
                 from_user=from_user,
-                date=int(self._now),
             )
             update = FakeUpdate(update_id=self._next_update_id, message=message)
             self._next_message_id += 1
@@ -121,35 +116,6 @@ class MemoryStorage:
                 "consumed": self._consumed_update_id >= update_id,
             }
 
-    async def clock(self) -> dict[str, int | float]:
-        async with self._condition:
-            return {"unix": self._now, "revision": self._clock_revision}
-
-    async def wait_until(self, target: float, timeout: float) -> dict[str, int | float]:
-        async with self._condition:
-            if self._now < target:
-                try:
-                    await asyncio.wait_for(
-                        self._condition.wait_for(lambda: self._now >= target),
-                        timeout=timeout,
-                    )
-                except TimeoutError:
-                    pass
-            return {"unix": self._now, "revision": self._clock_revision}
-
-    async def advance_clock(self, seconds: float) -> dict[str, int | float]:
-        if not math.isfinite(seconds) or seconds < 0:
-            raise ValueError("seconds must be non-negative")
-        async with self._condition:
-            self._now += seconds
-            self._clock_revision += 1
-            self._condition.notify_all()
-            return {"unix": self._now, "revision": self._clock_revision}
-
-    async def now(self) -> float:
-        async with self._condition:
-            return self._now
-
     async def next_bot_message_id(self) -> int:
         async with self._condition:
             message_id = self._next_bot_message_id
@@ -161,8 +127,6 @@ class MemoryStorage:
             self._events.clear()
             self._updates.clear()
             self._consumed_update_id = self._next_update_id - 1
-            self._now = float(time())
-            self._clock_revision += 1
             self._condition.notify_all()
 
     def _select_updates(self, offset: int | None, limit: int) -> list[FakeUpdate]:

@@ -4,7 +4,7 @@ from aiohttp import ClientSession
 
 from testgram.client import TestgramClient
 
-from .actions import AdvanceTimeAction, ClickAction, SendAction
+from .actions import ClickAction, SendAction
 from .errors import ScenarioError, require_mapping
 from .expectations import ChatExpectation, Expectation, NoneExpectation
 from .models import Scenario, ScenarioStep
@@ -79,19 +79,6 @@ class ScenarioRunner:
                     line=step.line,
                 ) from error
             return max(seen_events, source_event + 1)
-
-        if "advance_time" in step_payload:
-            action = AdvanceTimeAction.from_payload(
-                require_mapping(
-                    step_payload["advance_time"],
-                    "advance_time",
-                    self._scenario.path,
-                    step.line,
-                )
-            )
-            print(f"{step_number}. time: +{action.describe()}")
-            await action.run(client=self._client, session=session)
-            return seen_events
 
         if "expect" in step_payload:
             expectation = Expectation.from_payload(

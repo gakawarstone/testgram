@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -110,23 +109,3 @@ class ClickAction:
     def describe(self) -> str:
         suffix = f" in message {self.message_id}" if self.message_id is not None else ""
         return f"callback_data={self.callback_data!r}{suffix}"
-
-
-@dataclass(slots=True)
-class AdvanceTimeAction:
-    seconds: float
-
-    @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> AdvanceTimeAction:
-        if "seconds" not in payload:
-            raise ScenarioError("advance_time.seconds is required")
-        seconds = float(payload["seconds"])
-        if not math.isfinite(seconds) or seconds < 0:
-            raise ScenarioError("advance_time.seconds must be non-negative")
-        return cls(seconds=seconds)
-
-    async def run(self, client: TestgramClient, session: ClientSession) -> None:
-        await client.advance_time(session, self.seconds)
-
-    def describe(self) -> str:
-        return f"{self.seconds:g} second(s)"

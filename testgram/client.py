@@ -73,15 +73,6 @@ class TestgramClient:
         if not status["consumed"]:
             raise TimeoutError(f"update {update_id} was not consumed within {timeout:g}s")
 
-    async def advance_time(
-        self, session: ClientSession, seconds: float
-    ) -> dict[str, int | float]:
-        async with session.post(
-            f"{self.base_url}/testgram/time/advance", json={"seconds": seconds}
-        ) as response:
-            response.raise_for_status()
-            return (await response.json())["result"]
-
     async def click(
         self,
         session: ClientSession,

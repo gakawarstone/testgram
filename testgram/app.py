@@ -27,7 +27,5 @@ def create_app(log_file: Path | None = None, quiet: bool = False) -> web.Applica
     app.router.add_get(
         "/testgram/updates/{update_id}/consumed", telegram_api.update_consumed
     )
-    app.router.add_get("/testgram/time", telegram_api.get_time)
-    app.router.add_post("/testgram/time/advance", telegram_api.advance_time)
 
     return app

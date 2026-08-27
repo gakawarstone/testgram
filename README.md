@@ -127,22 +127,6 @@ steps:
       duration: 1
 ```
 
-Scheduled behavior can use Testgram's virtual clock. Bots launched by
-`testgram run` receive `TESTGRAM_TIME_URL`; Python bots can use
-`testgram.clock.now()` and `testgram.clock.sleep()` in place of wall-clock
-calls. Advance the clock without waiting in real time:
-
-```yaml
-steps:
-  - send: {text: /remind-me}
-  - advance_time: {seconds: 3600}
-  - expect: {text: Reminder}
-```
-
-The clock is also available through `GET /testgram/time` and
-`POST /testgram/time/advance` with a JSON `seconds` value. It controls fake
-Telegram message dates as well as cooperative sleeps.
-
 Click an inline-keyboard button by its exact callback data. Testgram finds the
 most recent matching button in the scenario chat and injects a Telegram
 `callback_query` containing the original bot message, user, chat, and callback

@@ -103,27 +103,6 @@ class TelegramApi:
             )
         return self._ok(status)
 
-    async def get_time(self, request: web.Request) -> web.Response:
-        if "until" in request.query:
-            try:
-                target = float(request.query["until"])
-                timeout = float(request.query.get("timeout", 30))
-            except ValueError as error:
-                raise web.HTTPBadRequest(text=str(error)) from error
-            return self._ok(await self._storage.wait_until(target, timeout))
-        return self._ok(await self._storage.clock())
-
-    async def advance_time(self, request: web.Request) -> web.Response:
-        payload = await request.json()
-        try:
-            seconds = float(payload["seconds"])
-            clock = await self._storage.advance_clock(seconds)
-        except (KeyError, TypeError, ValueError) as error:
-            raise web.HTTPBadRequest(text=str(error)) from error
-        event = await self._logger.write("time_advanced", {"seconds": seconds, **clock})
-        await self._storage.add_event(event)
-        return self._ok(clock)
-
     async def _method_getMe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": 999_001,
@@ -282,7 +261,7 @@ class TelegramApi:
                 "id": chat_id,
                 "type": "private",
             },
-            "date": int(await self._storage.now()),
+            "date": 1,
         }
         message.update({key: value for key, value in extra.items() if value is not None})
         for key in ("reply_markup", "parse_mode"):
