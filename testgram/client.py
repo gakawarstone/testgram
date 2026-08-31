@@ -46,7 +46,7 @@ class TestgramClient:
             payload = await response.json()
         return payload["result"]
 
-    async def send_message(self, session: ClientSession, text: str) -> None:
+    async def send_message(self, session: ClientSession, text: str) -> int:
         payload = {
             "chat_id": self.chat_id,
             "text": text,
@@ -55,12 +55,31 @@ class TestgramClient:
         }
         async with session.post(f"{self.base_url}/testgram/messages", json=payload) as response:
             response.raise_for_status()
+            result = (await response.json())["result"]
+        return int(result["update_id"])
+
+    async def wait_for_update_consumed(
+        self,
+        session: ClientSession,
+        update_id: int,
+        timeout: float,
+    ) -> None:
+        async with session.get(
+            f"{self.base_url}/testgram/updates/{update_id}/consumed",
+            params={"timeout": timeout},
+        ) as response:
+            response.raise_for_status()
+            status = (await response.json())["result"]
+        if not status["consumed"]:
+            raise TimeoutError(f"update {update_id} was not consumed within {timeout:g}s")
 
     async def click(
         self,
         session: ClientSession,
         callback_data: str,
         message_id: int | None = None,
+        wait_consumed: bool = False,
+        timeout: float = 0,
     ) -> int:
         source = self._find_callback_source(
             await self.get_events(session),
@@ -83,6 +102,11 @@ class TestgramClient:
             f"{self.base_url}/testgram/callbacks", json=payload
         ) as response:
             response.raise_for_status()
+            update = (await response.json())["result"]
+        if wait_consumed:
+            await self.wait_for_update_consumed(
+                session, int(update["update_id"]), timeout
+            )
         return source_index
 
     def _find_callback_source(

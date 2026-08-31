@@ -107,6 +107,26 @@ steps:
       text_contains: /list
 ```
 
+`send` and `click` wait for the injected update to be consumed before the next
+step starts. Consumption follows Telegram's acknowledgement rule: the bot must
+make a subsequent `getUpdates` request with an offset greater than the injected
+update id. This makes consecutive actions deterministic. Set
+`wait_consumed: false` on an action only when deliberately testing overlapping
+updates; its `timeout` defaults to the scenario timeout.
+Control clients can query or long-poll the same state at
+`GET /testgram/updates/{update_id}/consumed?timeout=5`.
+
+Assert that a matching reply does not occur during a complete observation
+window with `expect_none` (it never succeeds immediately):
+
+```yaml
+steps:
+  - send: {text: /quiet}
+  - expect_none:
+      text_contains: Error
+      duration: 1
+```
+
 Click an inline-keyboard button by its exact callback data. Testgram finds the
 most recent matching button in the scenario chat and injects a Telegram
 `callback_query` containing the original bot message, user, chat, and callback
