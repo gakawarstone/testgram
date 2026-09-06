@@ -91,6 +91,18 @@ class TelegramApi:
     async def health(self, request: web.Request) -> web.Response:
         return self._ok({"status": "ok"})
 
+    async def update_consumed(self, request: web.Request) -> web.Response:
+        update_id = int(request.match_info["update_id"])
+        timeout = float(request.query.get("timeout", 0))
+        status = await self._storage.update_status(update_id)
+        if status is None:
+            raise web.HTTPNotFound(text=f"update {update_id} was not found")
+        if not status["consumed"] and timeout > 0:
+            status["consumed"] = await self._storage.wait_for_update_consumed(
+                update_id, timeout
+            )
+        return self._ok(status)
+
     async def _method_getMe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": 999_001,

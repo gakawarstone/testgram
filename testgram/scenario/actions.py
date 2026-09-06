@@ -18,9 +18,13 @@ class SendAction:
     text: str
     times: int
     mode: str
+    wait_consumed: bool
+    timeout: float
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> SendAction:
+    def from_payload(
+        cls, payload: dict[str, Any], default_timeout: float = 5.0
+    ) -> SendAction:
         if "text" not in payload:
             raise ScenarioError("send.text is required")
 
@@ -36,17 +40,30 @@ class SendAction:
             text=str(payload["text"]),
             times=times,
             mode=mode,
+            wait_consumed=bool(payload.get("wait_consumed", True)),
+            timeout=float(payload.get("timeout", default_timeout)),
         )
 
     async def run(self, client: TestgramClient, session: ClientSession) -> None:
         if self.mode == "concurrent":
-            await asyncio.gather(
+            update_ids = await asyncio.gather(
                 *(client.send_message(session, self.text) for _ in range(self.times))
             )
+            if self.wait_consumed:
+                await asyncio.gather(
+                    *(
+                        client.wait_for_update_consumed(
+                            session, update_id, self.timeout
+                        )
+                        for update_id in update_ids
+                    )
+                )
             return
 
         for _ in range(self.times):
-            await client.send_message(session, self.text)
+            update_id = await client.send_message(session, self.text)
+            if self.wait_consumed:
+                await client.wait_for_update_consumed(session, update_id, self.timeout)
 
     def describe(self) -> str:
         if self.times == 1:
@@ -60,9 +77,13 @@ class ClickAction:
     callback_data_regex: str | None
     button_text: str | None
     message_id: int | None
+    wait_consumed: bool
+    timeout: float
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> ClickAction:
+    def from_payload(
+        cls, payload: dict[str, Any], default_timeout: float = 5.0
+    ) -> ClickAction:
         callback_data = payload.get("callback_data", payload.get("data"))
         callback_data_regex = payload.get(
             "callback_data_regex", payload.get("data_regex")
@@ -89,6 +110,8 @@ class ClickAction:
             ),
             button_text=str(button_text) if button_text is not None else None,
             message_id=int(message_id) if message_id is not None else None,
+            wait_consumed=bool(payload.get("wait_consumed", True)),
+            timeout=float(payload.get("timeout", default_timeout)),
         )
 
     async def run(self, client: TestgramClient, session: ClientSession) -> int:
@@ -99,6 +122,8 @@ class ClickAction:
                 message_id=self.message_id,
                 callback_data_regex=self.callback_data_regex,
                 button_text=self.button_text,
+                wait_consumed=self.wait_consumed,
+                timeout=self.timeout,
             )
         except ValueError as error:
             raise ScenarioError(str(error)) from error

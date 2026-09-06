@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from aiohttp import ClientSession
@@ -7,7 +8,11 @@ from aiohttp import ClientSession
 from testgram.client import TestgramClient
 from testgram.scenario.actions import ClickAction
 from testgram.scenario.errors import ScenarioError
-from testgram.scenario.expectations import ChatBotMessagesExpectation, MessageMatcher
+from testgram.scenario.expectations import (
+    ChatBotMessagesExpectation,
+    MessageMatcher,
+    NoneExpectation,
+)
 from testgram.server import RunningServer, start_server
 
 
@@ -121,6 +126,54 @@ class CallbackFlowTests(unittest.IsolatedAsyncioTestCase):
                 updates = (await response.json())["result"]
 
         self.assertEqual(updates[-1]["callback_query"]["data"], "open:48391")
+
+    async def test_update_is_consumed_only_after_offset_advances(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async with ClientSession() as session:
+            update_id = await client.send_message(session, "/start")
+            waiter = asyncio.create_task(
+                client.wait_for_update_consumed(session, update_id, timeout=1)
+            )
+
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates", json={}
+            ) as response:
+                response.raise_for_status()
+                self.assertEqual(
+                    (await response.json())["result"][0]["update_id"], update_id
+                )
+            await asyncio.sleep(0)
+            self.assertFalse(waiter.done())
+
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates",
+                json={"offset": update_id + 1},
+            ) as response:
+                response.raise_for_status()
+            await waiter
+
+    async def test_expect_none_observes_the_whole_window(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+        expectation = NoneExpectation.from_payload(
+            {"text": "forbidden", "duration": 0.3}, default_timeout=1
+        )
+
+        async with ClientSession() as session:
+
+            async def delayed_reply() -> None:
+                await asyncio.sleep(0.1)
+                async with session.post(
+                    f"{self.server.url}/bot123/sendMessage",
+                    json={"chat_id": 42, "text": "forbidden"},
+                ) as response:
+                    response.raise_for_status()
+
+            task = asyncio.create_task(delayed_reply())
+            violation, _ = await expectation.observe(client, session, seen_events=0)
+            await task
+
+        self.assertIsNotNone(violation)
 
 
 class ClickActionTests(unittest.TestCase):
