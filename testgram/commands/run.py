@@ -10,7 +10,6 @@ from aiohttp import ClientSession
 
 from testgram.config import ProjectConfig, load_project_config
 from testgram.factory import create_client
-from testgram.client import TestgramClient
 from testgram.scenario import Scenario, ScenarioError, run_scenario
 from testgram.server import start_server
 
@@ -23,6 +22,42 @@ async def run_command(args: argparse.Namespace) -> None:
 
     config = load_project_config(args.config, start=args.scenario)
     scenario_paths = discover_scenarios(args.scenario)
+    if args.parallel > 1 and len(scenario_paths) > 1 and args.port != 0:
+        raise ScenarioError(
+            "--port must be 0 when running multiple scenarios in parallel"
+        )
+    scenarios = [
+        Scenario.from_file(scenario_path, default_timeout=args.timeout)
+        for scenario_path in scenario_paths
+    ]
+
+    semaphore = asyncio.Semaphore(args.parallel)
+
+    async def run_one(index: int, scenario: Scenario) -> None:
+        async with semaphore:
+            await run_scenario_isolated(
+                args=args,
+                config=config,
+                scenario=scenario,
+                chat_id=args.chat_id + index,
+            )
+
+    if args.parallel == 1:
+        for index, scenario in enumerate(scenarios):
+            await run_one(index, scenario)
+    else:
+        await asyncio.gather(
+            *(run_one(index, scenario) for index, scenario in enumerate(scenarios))
+        )
+
+
+async def run_scenario_isolated(
+    *,
+    args: argparse.Namespace,
+    config: ProjectConfig,
+    scenario: Scenario,
+    chat_id: int,
+) -> None:
     server = await start_server(
         host=args.host,
         port=args.port,
@@ -34,27 +69,13 @@ async def run_command(args: argparse.Namespace) -> None:
     try:
         await wait_for_server(server.url)
         await bot.start()
-
         client = create_client(
             base_url=server.url,
-            chat_id=args.chat_id,
+            chat_id=chat_id,
             username=args.username,
             first_name=args.first_name,
         )
-        scenarios = [
-            Scenario.from_file(scenario_path, default_timeout=args.timeout)
-            for scenario_path in scenario_paths
-        ]
-        if args.parallel == 1:
-            for scenario in scenarios:
-                await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
-        else:
-            await run_scenarios_parallel(
-                client=client,
-                scenarios=scenarios,
-                parallel=args.parallel,
-                reset=not args.no_reset,
-            )
+        await run_scenario(client=client, scenario=scenario, reset=not args.no_reset)
     except ScenarioError as error:
         diagnostics = await bot.diagnostics()
         if diagnostics and diagnostics not in error.message:
@@ -67,33 +88,6 @@ async def run_command(args: argparse.Namespace) -> None:
     finally:
         await bot.stop()
         await server.close()
-
-
-async def run_scenarios_parallel(
-    client: TestgramClient,
-    scenarios: list[Scenario],
-    parallel: int,
-    reset: bool,
-) -> None:
-    if reset:
-        async with ClientSession() as session:
-            await client.reset(session)
-
-    semaphore = asyncio.Semaphore(parallel)
-
-    async def run_one(index: int, scenario: Scenario) -> None:
-        async with semaphore:
-            scenario_client = TestgramClient(
-                base_url=client.base_url,
-                chat_id=client.chat_id + index,
-                username=client.username,
-                first_name=client.first_name,
-            )
-            await run_scenario(client=scenario_client, scenario=scenario, reset=False)
-
-    await asyncio.gather(
-        *(run_one(index, scenario) for index, scenario in enumerate(scenarios))
-    )
 
 
 def discover_scenarios(path: Path) -> list[Path]:

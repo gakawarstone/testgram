@@ -64,9 +64,11 @@ Run multiple scenarios from a directory concurrently:
 uv run testgram run scenarios/ --parallel 4
 ```
 
-Parallel runs use separate chat ids for each scenario, starting at `--chat-id`.
-When reset is enabled, testgram resets once before the parallel batch instead of
-between scenarios.
+Directory runs isolate every scenario with a fresh testgram server, bot process,
+and chat id, starting at `--chat-id`. This also gives in-process FSM storage and
+bot-owned database connections a fresh lifecycle. Parallel runs execute these
+isolated runtimes concurrently; when multiple scenarios run in parallel,
+`--port` must remain `0` so each server can bind its own automatic port.
 
 In a bot project, add `testgram.yaml` next to the bot command so scenarios do
 not duplicate setup:
