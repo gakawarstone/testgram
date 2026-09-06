@@ -144,6 +144,37 @@ steps:
       text: Video settings
 ```
 
+When callback data contains generated IDs, select the button with a regular
+expression or its visible text. The matched button's actual callback data is
+sent to the bot:
+
+```yaml
+steps:
+  - send: {text: /create}
+  - expect: {text_contains: Created}
+  - click:
+      callback_data_regex: '^record:\d+:open$'
+  - expect: {text: Record details}
+
+  # Or select by the visible label:
+  - click:
+      button_text: Delete
+```
+
+`click` requires exactly one of `callback_data`, `callback_data_regex`, or
+`button_text`. It searches the newest matching bot message first. When several
+messages contain the same button, restrict the search with the same message
+fields accepted by `expect`:
+
+```yaml
+- click:
+    button_text: Open
+    message:
+      text_contains: Record created
+```
+
+`message_id` can still restrict the search when the ID is known.
+
 `expect` supports structured bot-message fields in addition to `method`, `text`,
 and `text_contains`: `reply_markup`, `callback_data`, `media_type`, `filename`,
 `duration`, `caption`, `parse_mode`, and `chat_id`. Use the one-based `order`
