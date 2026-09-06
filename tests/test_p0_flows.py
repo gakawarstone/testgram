@@ -127,6 +127,47 @@ class CallbackFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(updates[-1]["callback_query"]["data"], "open:48391")
 
+    async def test_click_restricts_button_search_with_message_matcher(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+
+        async with ClientSession() as session:
+            for text, callback_data in (
+                ("First record", "open:1"),
+                ("Second record", "open:2"),
+            ):
+                async with session.post(
+                    f"{self.server.url}/bot123/sendMessage",
+                    json={
+                        "chat_id": 42,
+                        "text": text,
+                        "reply_markup": {
+                            "inline_keyboard": [
+                                [{"text": "Open", "callback_data": callback_data}]
+                            ]
+                        },
+                    },
+                ) as response:
+                    response.raise_for_status()
+
+            action = ClickAction.from_payload(
+                {
+                    "button_text": "Open",
+                    "message": {"text": "First record"},
+                    "wait_consumed": False,
+                }
+            )
+            await action.run(client, session)
+
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates", json={}
+            ) as response:
+                response.raise_for_status()
+                updates = (await response.json())["result"]
+
+        callback = updates[-1]["callback_query"]
+        self.assertEqual(callback["data"], "open:1")
+        self.assertEqual(callback["message"]["text"], "First record")
+
     async def test_update_is_consumed_only_after_offset_advances(self) -> None:
         client = TestgramClient(self.server.url, chat_id=42)
 
@@ -184,6 +225,14 @@ class ClickActionTests(unittest.TestCase):
         self.assertEqual(regex.callback_data_regex, r"^record:\d+$")
         self.assertEqual(text.button_text, "Open")
 
+    def test_accepts_message_matcher(self) -> None:
+        action = ClickAction.from_payload(
+            {"button_text": "Open", "message": {"text_contains": "created"}}
+        )
+
+        self.assertIsNotNone(action.message)
+        self.assertEqual(action.message.text_contains, "created")
+
     def test_rejects_missing_or_competing_selectors(self) -> None:
         with self.assertRaisesRegex(ScenarioError, "exactly one"):
             ClickAction.from_payload({})
@@ -193,6 +242,10 @@ class ClickActionTests(unittest.TestCase):
     def test_rejects_invalid_callback_regex(self) -> None:
         with self.assertRaisesRegex(ScenarioError, "regex is invalid"):
             ClickAction.from_payload({"callback_data_regex": "["})
+
+    def test_rejects_non_mapping_message_matcher(self) -> None:
+        with self.assertRaisesRegex(ScenarioError, "click.message must be a mapping"):
+            ClickAction.from_payload({"button_text": "Open", "message": "created"})
 
 
 class StructuredExpectationTests(unittest.TestCase):

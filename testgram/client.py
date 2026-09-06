@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, Protocol
 
 from aiohttp import ClientSession
 
@@ -23,6 +23,10 @@ BOT_MESSAGE_METHODS = {
     "editMessageMedia",
     "editMessageReplyMarkup",
 }
+
+
+class BotEventMatcher(Protocol):
+    def matches(self, event: dict[str, Any]) -> bool: ...
 
 
 class TestgramClient:
@@ -89,6 +93,7 @@ class TestgramClient:
         *,
         callback_data_regex: str | None = None,
         button_text: str | None = None,
+        message_matcher: BotEventMatcher | None = None,
     ) -> int:
         source = self._find_callback_source(
             await self.get_events(session),
@@ -96,6 +101,7 @@ class TestgramClient:
             callback_data_regex=callback_data_regex,
             button_text=button_text,
             message_id=message_id,
+            message_matcher=message_matcher,
         )
         if source is None:
             detail = f" in message {message_id}" if message_id is not None else ""
@@ -133,6 +139,7 @@ class TestgramClient:
         callback_data_regex: str | None,
         button_text: str | None,
         message_id: int | None,
+        message_matcher: BotEventMatcher | None,
     ) -> tuple[int, dict[str, Any], str] | None:
         callback_pattern = (
             re.compile(callback_data_regex) if callback_data_regex is not None else None
@@ -140,6 +147,8 @@ class TestgramClient:
         for event_index in range(len(events) - 1, -1, -1):
             event = events[event_index]
             if not self.is_bot_reply(event):
+                continue
+            if message_matcher is not None and not message_matcher.matches(event):
                 continue
             event_payload = event.get("payload", {})
             request_payload = event_payload.get("payload", {})
