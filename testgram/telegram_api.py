@@ -271,9 +271,11 @@ class TelegramApi:
             "date": 1,
         }
         message.update({key: value for key, value in extra.items() if value is not None})
-        for key in ("reply_markup", "parse_mode"):
-            if key in payload:
-                message[key] = payload[key]
+        reply_markup = payload.get("reply_markup")
+        if isinstance(reply_markup, dict) and "inline_keyboard" in reply_markup:
+            message["reply_markup"] = reply_markup
+        if "parse_mode" in payload:
+            message["parse_mode"] = payload["parse_mode"]
         return message
 
     async def _edited_bot_message(
