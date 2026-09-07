@@ -64,10 +64,12 @@ class DirectoryRunIsolationTests(unittest.IsolatedAsyncioTestCase):
             scenarios = project / "scenarios"
             scenarios.mkdir()
             (scenarios / "one.yaml").write_text(
-                "name: one\nsteps:\n  - send:\n      text: first\n"
+                "name: one\nsteps:\n  - send:\n"
+                "      text: first\n      wait_consumed: false\n"
             )
             (scenarios / "two.yaml").write_text(
-                "name: two\nsteps:\n  - send:\n      text: second\n"
+                "name: two\nsteps:\n  - send:\n"
+                "      text: second\n      wait_consumed: false\n"
             )
             log_path = project / "events.jsonl"
 

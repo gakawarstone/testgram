@@ -10,6 +10,7 @@ from testgram.scenario.actions import ClickAction
 from testgram.scenario.errors import ScenarioError
 from testgram.scenario.expectations import (
     ChatBotMessagesExpectation,
+    ChatExpectation,
     MessageMatcher,
     NoneExpectation,
 )
@@ -330,6 +331,54 @@ class StructuredExpectationTests(unittest.TestCase):
         client = TestgramClient("http://unused", chat_id=42)
         self.assertTrue(expectation.matches(client, [first, self.event]))
         self.assertFalse(expectation.matches(client, [self.event, first]))
+
+    def test_forbidden_message_can_match_a_document_in_another_chat(self) -> None:
+        event = {
+            "type": "bot_api_request",
+            "payload": {
+                "method": "sendDocument",
+                "payload": {
+                    "chat_id": 99,
+                    "document": {"filename": "crash.log", "content_type": "text/plain"},
+                },
+                "response": {"ok": True, "result": {}},
+            },
+        }
+
+        expectation = ChatExpectation.from_payload(
+            {"forbidden_bot_messages": [{"filename": "crash.log"}]},
+            default_timeout=1,
+        )
+        client = TestgramClient("http://unused", chat_id=42)
+
+        self.assertFalse(expectation.matches(client, [event]))
+        self.assertIn(
+            "found forbidden bot message",
+            expectation.failure_reason(client, [event]),
+        )
+
+    def test_other_documents_are_allowed(self) -> None:
+        event = {
+            "type": "bot_api_request",
+            "payload": {
+                "method": "sendDocument",
+                "payload": {
+                    "chat_id": 99,
+                    "document": {
+                        "filename": "report.txt",
+                        "content_type": "text/plain",
+                    },
+                },
+                "response": {"ok": True, "result": {}},
+            },
+        }
+        expectation = ChatExpectation.from_payload(
+            {"forbidden_bot_messages": [{"filename": "crash.log"}]},
+            default_timeout=1,
+        )
+        client = TestgramClient("http://unused", chat_id=42)
+
+        self.assertTrue(expectation.matches(client, [event]))
 
 
 if __name__ == "__main__":

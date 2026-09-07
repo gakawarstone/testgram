@@ -202,8 +202,14 @@ between the listed matches):
       messages:
         - {text: Preparing}
         - {media_type: video, caption: Ready}
+    forbidden_bot_messages:
+      - {filename: traceback.txt}
     no_errors: true
 ```
+
+`no_errors` checks server errors and unsuccessful Bot API responses. Use
+`forbidden_bot_messages` for application-specific failure messages. The matcher
+checks every chat, so it can catch diagnostics sent to an administrator.
 
 Send the same command multiple times, then assert the final chat state:
 

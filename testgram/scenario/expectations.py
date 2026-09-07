@@ -207,6 +207,7 @@ class NoneExpectation:
 @dataclass(slots=True)
 class ChatExpectation:
     bot_messages: ChatBotMessagesExpectation | None
+    forbidden_bot_messages: list[MessageMatcher]
     no_errors: bool
     timeout: float
 
@@ -222,8 +223,20 @@ class ChatExpectation:
                 raise ScenarioError("expect_chat.bot_messages must be a mapping")
             bot_messages = ChatBotMessagesExpectation.from_payload(payload["bot_messages"])
 
+        raw_forbidden = payload.get("forbidden_bot_messages", [])
+        if not isinstance(raw_forbidden, list):
+            raise ScenarioError("expect_chat.forbidden_bot_messages must be a list")
+        forbidden_bot_messages = []
+        for message in raw_forbidden:
+            if not isinstance(message, dict):
+                raise ScenarioError(
+                    "expect_chat.forbidden_bot_messages entries must be mappings"
+                )
+            forbidden_bot_messages.append(MessageMatcher.from_payload(message))
+
         return cls(
             bot_messages=bot_messages,
+            forbidden_bot_messages=forbidden_bot_messages,
             no_errors=bool(payload.get("no_errors", False)),
             timeout=float(payload.get("timeout", default_timeout)),
         )
@@ -251,17 +264,37 @@ class ChatExpectation:
     def matches(self, client: TestgramClient, events: list[dict[str, Any]]) -> bool:
         if self.no_errors and has_error_event(events):
             return False
+        if self.forbidden_message(client, events) is not None:
+            return False
         return self.bot_messages is None or self.bot_messages.matches(client, events)
 
     def failure_reason(self, client: TestgramClient, events: list[dict[str, Any]]) -> str:
         reasons = []
         if self.no_errors and has_error_event(events):
             reasons.append("found error event")
+        forbidden = self.forbidden_message(client, events)
+        if forbidden is not None:
+            reasons.append(f"found forbidden bot message: {forbidden.describe()}")
         if self.bot_messages is not None:
             reason = self.bot_messages.failure_reason(client, events)
             if reason is not None:
                 reasons.append(reason)
         return ", ".join(reasons) or "chat did not match"
+
+    def forbidden_message(
+        self, client: TestgramClient, events: list[dict[str, Any]]
+    ) -> MessageMatcher | None:
+        return next(
+            (
+                matcher
+                for matcher in self.forbidden_bot_messages
+                if any(
+                    client.is_bot_message(event) and matcher.matches(event)
+                    for event in events
+                )
+            ),
+            None,
+        )
 
     def describe(self, client: TestgramClient, events: list[dict[str, Any]]) -> str:
         if self.bot_messages is None:
