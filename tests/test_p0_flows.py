@@ -248,6 +248,38 @@ class ClickActionTests(unittest.TestCase):
             ClickAction.from_payload({"button_text": "Open", "message": "created"})
 
 
+class UnsupportedMethodTests(unittest.IsolatedAsyncioTestCase):
+    server: RunningServer
+
+    async def asyncSetUp(self) -> None:
+        self.server = await start_server("127.0.0.1", 0, quiet=True)
+
+    async def asyncTearDown(self) -> None:
+        await self.server.close()
+
+    async def test_returns_bot_api_error_and_records_failed_response(self) -> None:
+        async with ClientSession() as session:
+            async with session.post(
+                f"{self.server.url}/bot123/unsupportedMethod",
+                json={"chat_id": 42},
+            ) as response:
+                self.assertEqual(response.status, 404)
+                payload = await response.json()
+
+            async with session.get(f"{self.server.url}/testgram/events") as response:
+                response.raise_for_status()
+                events = (await response.json())["result"]
+
+        expected_response = {
+            "ok": False,
+            "error_code": 404,
+            "description": "Not Found",
+        }
+        self.assertEqual(payload, expected_response)
+        self.assertEqual(events[-1]["payload"]["method"], "unsupportedMethod")
+        self.assertEqual(events[-1]["payload"]["response"], expected_response)
+
+
 class StructuredExpectationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.event = {

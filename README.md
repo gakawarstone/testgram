@@ -247,5 +247,6 @@ curl -X POST http://127.0.0.1:8081/testgram/reset
 ## Notes
 
 This is intentionally not a full Telegram implementation. Unknown Bot API
-methods are logged and answered with `{"ok": true, "result": true}` so the
-framework can reveal which methods need real behavior next.
+methods are logged and answered with a Telegram-style HTTP 404 response:
+`{"ok": false, "error_code": 404, "description": "Not Found"}`. This makes
+missing fake implementations fail visibly instead of appearing successful.

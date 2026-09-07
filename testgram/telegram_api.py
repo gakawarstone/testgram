@@ -21,9 +21,16 @@ class TelegramApi:
 
         handler = getattr(self, f"_method_{method}", None)
         if handler is None:
-            result = True
+            response_payload = {
+                "ok": False,
+                "error_code": 404,
+                "description": "Not Found",
+            }
+            status = 404
         else:
             result = await handler(payload)
+            response_payload = {"ok": True, "result": result}
+            status = 200
 
         event = await self._logger.write(
             "bot_api_request",
@@ -31,12 +38,12 @@ class TelegramApi:
                 "token": token,
                 "method": method,
                 "payload": payload,
-                "response": {"ok": True, "result": result},
+                "response": response_payload,
             },
         )
         await self._storage.add_event(event)
 
-        return self._ok(result)
+        return web.json_response(response_payload, status=status)
 
     async def create_message(self, request: web.Request) -> web.Response:
         payload = await request.json()
