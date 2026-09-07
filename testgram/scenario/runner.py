@@ -6,7 +6,7 @@ from testgram.client import TestgramClient
 
 from .actions import ClickAction, SendAction
 from .errors import ScenarioError, require_mapping
-from .expectations import ChatExpectation, Expectation
+from .expectations import ChatExpectation, Expectation, NoneExpectation
 from .models import Scenario, ScenarioStep
 
 
@@ -48,22 +48,31 @@ class ScenarioRunner:
             send = SendAction.from_payload(
                 require_mapping(
                     step_payload["send"], "send", self._scenario.path, step.line
-                )
+                ),
+                self._scenario.timeout,
             )
             print(f"{step_number}. me: {send.describe()}")
-            await send.run(client=self._client, session=session)
+            try:
+                await send.run(client=self._client, session=session)
+            except TimeoutError as error:
+                raise ScenarioError(
+                    f"{step_number}. send failed: {error}",
+                    path=self._scenario.path,
+                    line=step.line,
+                ) from error
             return seen_events
 
         if "click" in step_payload:
             click = ClickAction.from_payload(
                 require_mapping(
                     step_payload["click"], "click", self._scenario.path, step.line
-                )
+                ),
+                self._scenario.timeout,
             )
             print(f"{step_number}. me: click {click.describe()}")
             try:
                 source_event = await click.run(client=self._client, session=session)
-            except ScenarioError as error:
+            except (ScenarioError, TimeoutError) as error:
                 raise ScenarioError(
                     f"{step_number}. click failed: {error}",
                     path=self._scenario.path,
@@ -92,6 +101,33 @@ class ScenarioRunner:
             event_index, event = match
             print(f"{step_number}. bot: {self._client.format_bot_reply(event)}")
             return event_index + 1
+
+        if "expect_none" in step_payload:
+            expectation = NoneExpectation.from_payload(
+                require_mapping(
+                    step_payload["expect_none"],
+                    "expect_none",
+                    self._scenario.path,
+                    step.line,
+                ),
+                self._scenario.timeout,
+            )
+            violation, final_seen_events = await expectation.observe(
+                client=self._client,
+                session=session,
+                seen_events=seen_events,
+            )
+            if violation is not None:
+                _, event = violation
+                raise ScenarioError(
+                    f"{step_number}. expect_none failed: got "
+                    f"{self._client.format_bot_reply(event)}; "
+                    f"forbidden {expectation.describe()}",
+                    path=self._scenario.path,
+                    line=step.line,
+                )
+            print(f"{step_number}. bot: no {expectation.describe()}")
+            return final_seen_events
 
         if "expect_chat" in step_payload:
             expectation = ChatExpectation.from_payload(

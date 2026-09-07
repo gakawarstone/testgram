@@ -21,9 +21,16 @@ class TelegramApi:
 
         handler = getattr(self, f"_method_{method}", None)
         if handler is None:
-            result = True
+            response_payload = {
+                "ok": False,
+                "error_code": 404,
+                "description": "Not Found",
+            }
+            status = 404
         else:
             result = await handler(payload)
+            response_payload = {"ok": True, "result": result}
+            status = 200
 
         event = await self._logger.write(
             "bot_api_request",
@@ -31,12 +38,12 @@ class TelegramApi:
                 "token": token,
                 "method": method,
                 "payload": payload,
-                "response": {"ok": True, "result": result},
+                "response": response_payload,
             },
         )
         await self._storage.add_event(event)
 
-        return self._ok(result)
+        return web.json_response(response_payload, status=status)
 
     async def create_message(self, request: web.Request) -> web.Response:
         payload = await request.json()
@@ -90,6 +97,18 @@ class TelegramApi:
 
     async def health(self, request: web.Request) -> web.Response:
         return self._ok({"status": "ok"})
+
+    async def update_consumed(self, request: web.Request) -> web.Response:
+        update_id = int(request.match_info["update_id"])
+        timeout = float(request.query.get("timeout", 0))
+        status = await self._storage.update_status(update_id)
+        if status is None:
+            raise web.HTTPNotFound(text=f"update {update_id} was not found")
+        if not status["consumed"] and timeout > 0:
+            status["consumed"] = await self._storage.wait_for_update_consumed(
+                update_id, timeout
+            )
+        return self._ok(status)
 
     async def _method_getMe(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {

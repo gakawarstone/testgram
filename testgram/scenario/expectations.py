@@ -40,7 +40,7 @@ class MessageMatcher:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> MessageMatcher:
-        duration = payload.get("duration")
+        duration = payload.get("media_duration", payload.get("duration"))
         return cls(
             method=optional_str(payload.get("method")),
             text=optional_str(payload.get("text")),
@@ -162,6 +162,46 @@ class Expectation:
         if self.order is not None:
             description += f", order={self.order}"
         return description
+
+
+@dataclass(slots=True)
+class NoneExpectation:
+    """Assert that no matching bot request appears for the entire window."""
+
+    matcher: MessageMatcher
+    timeout: float
+
+    @classmethod
+    def from_payload(
+        cls, payload: dict[str, Any], default_timeout: float
+    ) -> NoneExpectation:
+        timeout = float(payload.get("duration", payload.get("timeout", default_timeout)))
+        if timeout < 0:
+            raise ScenarioError("expect_none.duration must be non-negative")
+        matcher_payload = dict(payload)
+        matcher_payload.pop("duration", None)
+        return cls(matcher=MessageMatcher.from_payload(matcher_payload), timeout=timeout)
+
+    async def observe(
+        self,
+        client: TestgramClient,
+        session: ClientSession,
+        seen_events: int,
+    ) -> tuple[tuple[int, dict[str, Any]] | None, int]:
+        deadline = asyncio.get_running_loop().time() + self.timeout
+        events: list[dict[str, Any]] = []
+        while True:
+            events = await client.get_events(session)
+            for index, event in enumerate(events[seen_events:], start=seen_events):
+                if client.is_bot_reply(event) and self.matcher.matches(event):
+                    return (index, event), len(events)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None, len(events)
+            await asyncio.sleep(min(0.05, remaining))
+
+    def describe(self) -> str:
+        return f"{self.matcher.describe()} for {self.timeout:g}s"
 
 
 @dataclass(slots=True)
