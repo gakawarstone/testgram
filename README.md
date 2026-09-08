@@ -107,6 +107,18 @@ steps:
       text_contains: /list
 ```
 
+The [`examples/scenarios`](examples/scenarios) directory has complete examples
+for media messages, group administrators, inline queries, and raw updates. Run
+one file at a time:
+
+```bash
+uv run testgram run examples/scenarios/inline_query.yaml
+uv run testgram run examples/scenarios/group_administrators.yaml
+```
+
+The media and raw-update files only inject updates. Copy them into a bot-specific
+scenario and add the response you expect from that bot.
+
 `send` can inject text, document, photo, or audio messages. Set `user` and
 `chat` to override the scenario client's identity and private chat. A group
 message may also define the members that the fake Bot API returns from

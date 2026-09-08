@@ -1,0 +1,15 @@
+name: choose from an inline query
+timeout: 5
+steps:
+  - inline_query:
+      id: test-inline-query
+      query: lst red blue green
+      offset: ""
+      chat_type: group
+      user:
+        id: 77
+        first_name: Ira
+        username: ira
+
+  - expect:
+      method: answerInlineQuery

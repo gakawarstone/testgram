@@ -1,0 +1,24 @@
+name: bot joins a supergroup
+steps:
+  - update:
+      my_chat_member:
+        chat:
+          id: -1001234567890
+          type: supergroup
+          title: GKBot test group
+        from:
+          id: 42
+          is_bot: false
+          first_name: Alice
+          username: alice
+        date: 1
+        old_chat_member:
+          status: left
+          user: &bot
+            id: 999001
+            is_bot: true
+            first_name: Testgram Bot
+            username: testgram_bot
+        new_chat_member:
+          status: member
+          user: *bot

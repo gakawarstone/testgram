@@ -1,0 +1,28 @@
+name: admins command in a supergroup
+timeout: 5
+steps:
+  - send:
+      text: /admins
+      user:
+        id: 42
+        first_name: Alice
+        username: alice
+      chat:
+        id: -1001234567890
+        type: supergroup
+        title: GKBot test group
+      administrators:
+        - id: 7
+          first_name: Olga
+          username: owner
+          status: creator
+        - user:
+            id: 8
+            first_name: Max
+            username: moderator
+          status: administrator
+
+  - expect:
+      method: sendMessage
+      chat_id: -1001234567890
+      text_contains: "@owner"

@@ -1,0 +1,31 @@
+name: media messages from one user
+steps:
+  - send:
+      document:
+        file_id: test-sheet
+        file_unique_id: test-sheet-unique
+        file_name: input.xlsx
+        mime_type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      caption: Import this sheet
+      user: &alice
+        id: 42
+        first_name: Alice
+        username: alice
+
+  - send:
+      photo:
+        file_id: test-photo
+        file_unique_id: test-photo-unique
+        width: 1280
+        height: 720
+      caption: A photo from Alice
+      user: *alice
+
+  - send:
+      audio:
+        file_id: test-audio
+        file_unique_id: test-audio-unique
+        duration: 12
+        title: Test clip
+        performer: Testgram
+      user: *alice
