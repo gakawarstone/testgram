@@ -16,12 +16,20 @@ from .models import (
 class MemoryStorage:
     def __init__(self) -> None:
         self._condition = asyncio.Condition()
+        self._polling_count = 0
         self._events: list[dict[str, Any]] = []
         self._updates: list[FakeUpdate] = []
+        self._consumed_update_id = 0
         self._next_update_id = 1
         self._next_message_id = 1
         self._next_bot_message_id = 10_000
         self._chat_administrators: dict[str, list[dict[str, Any]]] = {}
+
+    def mark_polling_started(self) -> None:
+        self._polling_count += 1
+
+    def polling_count(self) -> int:
+        return self._polling_count
 
     async def add_event(self, event: dict[str, Any]) -> None:
         async with self._condition:
@@ -162,6 +170,10 @@ class MemoryStorage:
 
     async def get_updates(self, offset: int | None, limit: int, timeout: int) -> list[dict[str, Any]]:
         async with self._condition:
+            confirmed = min((offset or 1) - 1, self._next_update_id - 1)
+            if confirmed > self._consumed_update_id:
+                self._consumed_update_id = confirmed
+                self._condition.notify_all()
             if timeout > 0 and not self._select_updates(offset, limit):
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=timeout)
@@ -169,6 +181,31 @@ class MemoryStorage:
                     return []
 
             return [update.to_telegram() for update in self._select_updates(offset, limit)]
+
+    async def wait_for_update_consumed(self, update_id: int, timeout: float) -> bool:
+        """Wait until getUpdates confirms all updates through ``update_id``."""
+        async with self._condition:
+            if self._consumed_update_id >= update_id:
+                return True
+            try:
+                await asyncio.wait_for(
+                    self._condition.wait_for(
+                        lambda: self._consumed_update_id >= update_id
+                    ),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                return False
+            return True
+
+    async def update_status(self, update_id: int) -> dict[str, Any] | None:
+        async with self._condition:
+            if not any(update.update_id == update_id for update in self._updates):
+                return None
+            return {
+                "update_id": update_id,
+                "consumed": self._consumed_update_id >= update_id,
+            }
 
     async def next_bot_message_id(self) -> int:
         async with self._condition:
@@ -181,6 +218,7 @@ class MemoryStorage:
             self._events.clear()
             self._updates.clear()
             self._chat_administrators.clear()
+            self._consumed_update_id = self._next_update_id - 1
             self._condition.notify_all()
 
     def _select_updates(self, offset: int | None, limit: int) -> list[FakeUpdate]:
