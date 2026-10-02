@@ -10,7 +10,7 @@ from aiohttp import ClientSession
 
 from testgram.chat import open_chat
 from testgram.client import TestgramClient
-from testgram.scenario.actions import ClickAction
+from testgram.scenario.actions import ClickAction, SendAction
 from testgram.scenario.errors import ScenarioError
 from testgram.scenario.expectations import (
     ChatBotMessagesExpectation,
@@ -419,6 +419,214 @@ class ReplyMarkupResponseTests(unittest.IsolatedAsyncioTestCase):
                 message = (await response.json())["result"]
 
         self.assertEqual(message["reply_markup"], inline_keyboard)
+
+
+class ExpandedUpdateFlowTests(unittest.IsolatedAsyncioTestCase):
+    server: RunningServer
+
+    async def asyncSetUp(self) -> None:
+        self.server = await start_server("127.0.0.1", 0, quiet=True)
+
+    async def asyncTearDown(self) -> None:
+        await self.server.close()
+
+    async def test_media_actions_wait_for_consumption_in_both_modes(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+        async with ClientSession() as session:
+            offset = 1
+            for mode in ("sequential", "concurrent"):
+                with self.subTest(mode=mode):
+                    action = SendAction.from_payload(
+                        {
+                            "document": {"file_name": "input.xlsx"},
+                            "times": 2,
+                            "mode": mode,
+                            "timeout": 2,
+                        }
+                    )
+                    task = asyncio.create_task(action.run(client, session))
+                    try:
+                        received = []
+                        while len(received) < 2:
+                            async with session.post(
+                                f"{self.server.url}/bot123/getUpdates",
+                                json={"offset": offset, "timeout": 1},
+                            ) as response:
+                                response.raise_for_status()
+                                updates = (await response.json())["result"]
+                            self.assertTrue(updates)
+                            self.assertFalse(task.done())
+                            received.extend(updates)
+                            offset = updates[-1]["update_id"] + 1
+                        async with session.post(
+                            f"{self.server.url}/bot123/getUpdates",
+                            json={"offset": offset},
+                        ) as response:
+                            response.raise_for_status()
+                        await task
+                        for update in received:
+                            message = update["message"]
+                            self.assertEqual(message["document"]["file_name"], "input.xlsx")
+                            self.assertNotIn("timeout", message)
+                            self.assertNotIn("wait_consumed", message)
+                    finally:
+                        if not task.done():
+                            task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+    async def test_group_callback_combines_dynamic_selection_identity_and_wait(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+        async with ClientSession() as session:
+            message_update_id = await client.send(
+                session,
+                {
+                    "text": "/settings",
+                    "chat": {"id": -100, "type": "supergroup", "title": "Tests"},
+                },
+            )
+            async with session.post(
+                f"{self.server.url}/bot123/sendMessage",
+                json={
+                    "chat_id": -100,
+                    "text": "Settings",
+                    "reply_markup": {
+                        "inline_keyboard": [[{"text": "Open", "callback_data": "settings:123"}]]
+                    },
+                },
+            ) as response:
+                response.raise_for_status()
+            action = ClickAction.from_payload(
+                {
+                    "callback_data_regex": r"^settings:\d+$",
+                    "message": {"text": "Settings"},
+                    "user": {"id": 77, "first_name": "Ira", "username": "ira"},
+                    "timeout": 2,
+                }
+            )
+            task = asyncio.create_task(action.run(client, session))
+            try:
+                async with session.post(
+                    f"{self.server.url}/bot123/getUpdates",
+                    json={"offset": message_update_id + 1, "timeout": 1},
+                ) as response:
+                    response.raise_for_status()
+                    updates = (await response.json())["result"]
+                self.assertEqual(len(updates), 1)
+                self.assertFalse(task.done())
+                callback = updates[0]["callback_query"]
+                self.assertEqual(callback["data"], "settings:123")
+                self.assertEqual(callback["message"]["chat"]["id"], -100)
+                self.assertEqual(callback["from"]["id"], 77)
+                async with session.post(
+                    f"{self.server.url}/bot123/getUpdates",
+                    json={"offset": updates[0]["update_id"] + 1},
+                ) as response:
+                    response.raise_for_status()
+                await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_media_group_identity_and_administrators(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=-100, username="fallback")
+        chat = {"id": -100, "type": "supergroup", "title": "GKBot tests"}
+        user = {
+            "id": 42,
+            "first_name": "Alice",
+            "last_name": "Tester",
+            "username": "alice",
+            "language_code": "en",
+        }
+        administrators = [
+            {"id": 7, "first_name": "Owner", "username": "owner", "status": "creator"},
+            {"user": {"id": 8, "first_name": "Mod", "username": "mod"}},
+        ]
+
+        async with ClientSession() as session:
+            await client.send(
+                session,
+                {
+                    "document": {
+                        "file_id": "document-id",
+                        "file_unique_id": "document-unique",
+                        "file_name": "input.xlsx",
+                        "mime_type": "application/vnd.ms-excel",
+                    },
+                    "caption": "Import",
+                    "user": user,
+                    "chat": chat,
+                    "administrators": administrators,
+                },
+            )
+            await client.send(
+                session,
+                {"photo": {"file_id": "photo-id", "width": 640, "height": 480}, "chat": chat},
+            )
+            await client.send(
+                session,
+                {"audio": {"file_id": "audio-id", "duration": 12, "title": "Clip"}, "chat": chat},
+            )
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates", json={}
+            ) as response:
+                updates = (await response.json())["result"]
+            async with session.post(
+                f"{self.server.url}/bot123/getChatAdministrators",
+                json={"chat_id": -100},
+            ) as response:
+                admins = (await response.json())["result"]
+
+        document = updates[0]["message"]
+        self.assertEqual(document["from"]["id"], 42)
+        self.assertEqual(document["from"]["last_name"], "Tester")
+        self.assertEqual(document["chat"], {"id": -100, "type": "supergroup", "title": "GKBot tests"})
+        self.assertEqual(document["document"]["file_name"], "input.xlsx")
+        self.assertEqual(document["caption"], "Import")
+        self.assertEqual(updates[1]["message"]["photo"][0]["width"], 640)
+        self.assertEqual(updates[2]["message"]["audio"]["duration"], 12)
+        self.assertEqual([admin["user"]["username"] for admin in admins], ["owner", "mod"])
+        self.assertEqual(admins[0]["status"], "creator")
+
+    async def test_inline_query_and_raw_update_are_delivered(self) -> None:
+        client = TestgramClient(self.server.url, chat_id=42)
+        async with ClientSession() as session:
+            await client.send_inline_query(
+                session,
+                {
+                    "id": "query-1",
+                    "query": "lst red blue",
+                    "offset": "next",
+                    "chat_type": "group",
+                    "user": {"id": 77, "first_name": "Inline", "username": "inline"},
+                },
+            )
+            await client.send_raw_update(
+                session,
+                {
+                    "my_chat_member": {
+                        "chat": {"id": -200, "type": "group", "title": "Raw"},
+                        "from": {"id": 77, "is_bot": False, "first_name": "Inline"},
+                        "date": 1,
+                        "old_chat_member": {"status": "left", "user": {"id": 999, "is_bot": True, "first_name": "Bot"}},
+                        "new_chat_member": {"status": "member", "user": {"id": 999, "is_bot": True, "first_name": "Bot"}},
+                    }
+                },
+            )
+            async with session.post(
+                f"{self.server.url}/bot123/getUpdates", json={}
+            ) as response:
+                updates = (await response.json())["result"]
+            events = await client.get_events(session)
+
+        inline_query = updates[0]["inline_query"]
+        self.assertEqual(inline_query["id"], "query-1")
+        self.assertEqual(inline_query["from"]["id"], 77)
+        self.assertEqual(inline_query["query"], "lst red blue")
+        self.assertEqual(inline_query["chat_type"], "group")
+        self.assertEqual(updates[1]["update_id"], updates[0]["update_id"] + 1)
+        self.assertEqual(updates[1]["my_chat_member"]["chat"]["id"], -200)
+        self.assertEqual([event["type"] for event in events], ["inline_query", "telegram_update", "bot_api_request"])
 
 
 class StructuredExpectationTests(unittest.TestCase):

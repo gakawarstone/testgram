@@ -16,18 +16,30 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class SendAction:
-    text: str
+    message: dict[str, Any]
     times: int
     mode: str
     wait_consumed: bool
     timeout: float
 
+    @property
+    def text(self) -> str | None:
+        value = self.message.get("text")
+        return None if value is None else str(value)
+
     @classmethod
     def from_payload(
         cls, payload: dict[str, Any], default_timeout: float = 5.0
     ) -> SendAction:
-        if "text" not in payload:
-            raise ScenarioError("send.text is required")
+        content_types = [
+            key for key in ("text", "document", "photo", "audio") if key in payload
+        ]
+        if not content_types:
+            raise ScenarioError(
+                "send requires one of text, document, photo, or audio"
+            )
+        if len(content_types) > 1:
+            raise ScenarioError("send accepts only one message content type")
 
         times = int(payload.get("times", 1))
         if times < 1:
@@ -38,7 +50,11 @@ class SendAction:
             raise ScenarioError("send.mode must be 'sequential' or 'concurrent'")
 
         return cls(
-            text=str(payload["text"]),
+            message={
+                key: value
+                for key, value in payload.items()
+                if key not in {"times", "mode", "wait_consumed", "timeout"}
+            },
             times=times,
             mode=mode,
             wait_consumed=bool(payload.get("wait_consumed", True)),
@@ -48,7 +64,7 @@ class SendAction:
     async def run(self, client: TestgramClient, session: ClientSession) -> None:
         if self.mode == "concurrent":
             update_ids = await asyncio.gather(
-                *(client.send_message(session, self.text) for _ in range(self.times))
+                *(client.send(session, self.message) for _ in range(self.times))
             )
             if self.wait_consumed:
                 await asyncio.gather(
@@ -62,14 +78,19 @@ class SendAction:
             return
 
         for _ in range(self.times):
-            update_id = await client.send_message(session, self.text)
+            update_id = await client.send(session, self.message)
             if self.wait_consumed:
                 await client.wait_for_update_consumed(session, update_id, self.timeout)
 
     def describe(self) -> str:
+        content_type = next(
+            key for key in ("text", "document", "photo", "audio") if key in self.message
+        )
+        content = self.message[content_type]
+        description = str(content) if content_type == "text" else f"[{content_type}]"
         if self.times == 1:
-            return self.text
-        return f"{self.text} ({self.times} times, {self.mode})"
+            return description
+        return f"{description} ({self.times} times, {self.mode})"
 
 
 @dataclass(slots=True)
@@ -81,6 +102,7 @@ class ClickAction:
     message_id: int | None
     wait_consumed: bool
     timeout: float
+    user: dict[str, Any] | None = None
 
     @classmethod
     def from_payload(
@@ -108,6 +130,9 @@ class ClickAction:
         if raw_message is not None and not isinstance(raw_message, dict):
             raise ScenarioError("click.message must be a mapping")
         message_id = payload.get("message_id")
+        user = _identity(payload)
+        if user is not None and not isinstance(user, dict):
+            raise ScenarioError("click.user must be a mapping")
         return cls(
             callback_data=str(callback_data) if callback_data is not None else None,
             callback_data_regex=(
@@ -120,6 +145,7 @@ class ClickAction:
                 else None
             ),
             message_id=int(message_id) if message_id is not None else None,
+            user=user,
             wait_consumed=bool(payload.get("wait_consumed", True)),
             timeout=float(payload.get("timeout", default_timeout)),
         )
@@ -130,6 +156,7 @@ class ClickAction:
                 session,
                 callback_data=self.callback_data,
                 message_id=self.message_id,
+                user=self.user,
                 callback_data_regex=self.callback_data_regex,
                 button_text=self.button_text,
                 message_matcher=self.message,
@@ -150,3 +177,54 @@ class ClickAction:
             selector += f" in message matching ({self.message.describe()})"
         suffix = f" in message {self.message_id}" if self.message_id is not None else ""
         return selector + suffix
+
+
+@dataclass(slots=True)
+class InlineQueryAction:
+    payload: dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> InlineQueryAction:
+        if "query" not in payload:
+            raise ScenarioError("inline_query.query is required")
+        user = _identity(payload)
+        if user is not None and not isinstance(user, dict):
+            raise ScenarioError("inline_query.user must be a mapping")
+        location = payload.get("location")
+        if location is not None and not isinstance(location, dict):
+            raise ScenarioError("inline_query.location must be a mapping")
+        return cls(payload=dict(payload))
+
+    async def run(self, client: TestgramClient, session: ClientSession) -> None:
+        await client.send_inline_query(session, self.payload)
+
+    def describe(self) -> str:
+        return str(self.payload["query"])
+
+
+@dataclass(slots=True)
+class UpdateAction:
+    payload: dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> UpdateAction:
+        if not payload:
+            raise ScenarioError("update must not be empty")
+        return cls(payload=dict(payload))
+
+    async def run(self, client: TestgramClient, session: ClientSession) -> None:
+        await client.send_raw_update(session, self.payload)
+
+    def describe(self) -> str:
+        return ", ".join(self.payload)
+
+
+def _identity(payload: dict[str, Any]) -> Any:
+    return next(
+        (
+            payload[key]
+            for key in ("user", "from_user", "from", "identity")
+            if key in payload
+        ),
+        None,
+    )
