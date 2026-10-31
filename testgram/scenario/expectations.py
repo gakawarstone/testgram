@@ -132,20 +132,34 @@ class Expectation:
         session: ClientSession,
         seen_events: int,
     ) -> tuple[int, dict[str, Any]] | None:
-        deadline = asyncio.get_running_loop().time() + self.timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout
         while True:
-            events = await client.get_events(session)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            timeout = asyncio.timeout_at(deadline)
+            try:
+                async with timeout:
+                    events = await client.get_events(session)
+            except TimeoutError:
+                if timeout.expired():
+                    return None
+                raise
+            if loop.time() >= deadline:
+                return None
             bot_events = [
                 (index, event)
                 for index, event in enumerate(events[seen_events:], start=seen_events)
                 if client.is_bot_reply(event)
             ]
             match = self.find_indexed_match(bot_events)
-            if match is not None:
+            if match is not None and loop.time() < deadline:
                 return match
-            if asyncio.get_running_loop().time() >= deadline:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 return None
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(min(0.2, remaining))
 
     def find_indexed_match(
         self, events: list[tuple[int, dict[str, Any]]]

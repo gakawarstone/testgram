@@ -243,6 +243,11 @@ field to require a particular next-message position:
     chat_id: 1
 ```
 
+`expect.timeout` limits the whole wait, including HTTP requests for the event
+log. Messages already in the log are checked if time remains; a response received
+after the deadline cannot satisfy the expectation. A timeout of zero or less
+fails immediately.
+
 Chat-wide assertions can verify a sequence (unrelated messages may appear
 between the listed matches):
 
