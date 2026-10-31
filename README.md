@@ -243,6 +243,29 @@ field to require a particular next-message position:
     chat_id: 1
 ```
 
+Use `expect_api` to check any recorded Bot API method, including methods that
+are not message replies:
+
+```yaml
+- expect_api:
+    method: deleteMessage
+    params: {chat_id: 42, message_id: 123}
+    response: {ok: true, result: true}
+    timeout: 2
+```
+
+`method` is required. `params` and `response` are optional mappings; the
+response is the full Bot API envelope. A call matches only if its response has
+`ok: true`, even when `response` is omitted. Mapping fields match recursively
+as subsets, and lists match by length and position. Numeric parameter values
+also match their string form in form-encoded requests. Other scalar values must
+match in type and value. The default timeout is the scenario timeout; zero
+checks existing events once. The search includes all chats and recorded calls
+since the scenario started, including calls before this step. Repeated checks
+may match the same call. It does not consume message expectations or establish
+an ordering relative to actions. The call is recorded after the fake API method
+finishes, and does not establish that the bot's handler has finished.
+
 Chat-wide assertions can verify a sequence (unrelated messages may appear
 between the listed matches):
 
