@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from aiohttp import web
@@ -18,7 +19,7 @@ class TelegramApi:
         token = request.match_info["token"]
         method = request.match_info["method"]
         payload = await self._read_payload(request)
-        sequence = await self._storage.accept_api_request()
+        sequence, received_at = await self._storage.accept_api_request()
 
         handler = getattr(self, f"_method_{method}", None)
         if handler is None:
@@ -33,6 +34,7 @@ class TelegramApi:
             response_payload = {"ok": True, "result": result}
             status = 200
 
+        completed_at = time.monotonic()
         event = await self._logger.write(
             "bot_api_request",
             {
@@ -41,6 +43,9 @@ class TelegramApi:
                 "payload": payload,
                 "response": response_payload,
                 "sequence": sequence,
+                "server_id": self._storage.server_id,
+                "received_monotonic": received_at,
+                "completed_monotonic": completed_at,
             },
         )
         await self._storage.add_event(event)
@@ -109,10 +114,12 @@ class TelegramApi:
             raise web.HTTPBadRequest(text="message must be a mapping")
 
         source_chat = message.get("chat")
-        if not isinstance(source_chat, dict) or str(source_chat.get("id")) != str(chat_id):
+        if not isinstance(source_chat, dict) or str(source_chat.get("id")) != str(
+            chat_id
+        ):
             raise web.HTTPBadRequest(text="source message does not belong to chat_id")
 
-        update, boundary = await self._storage.create_callback_query(
+        update, boundary, queued_at = await self._storage.create_callback_query(
             data=data,
             message=message,
             chat_id=chat_id,
@@ -123,10 +130,20 @@ class TelegramApi:
                 "user",
             ),
         )
-        event = await self._logger.write("callback_query", update.to_telegram())
-        await self._storage.add_event(event)
         result = update.to_telegram()
         result["testgram_action_boundary"] = boundary
+        result["testgram_server_id"] = self._storage.server_id
+        result["testgram_queued_monotonic"] = queued_at
+        event = await self._logger.write(
+            "callback_query",
+            update.to_telegram(),
+            metadata={
+                "server_id": self._storage.server_id,
+                "queued_monotonic": queued_at,
+                "action_boundary": boundary,
+            },
+        )
+        await self._storage.add_event(event)
         return self._ok(result)
 
     async def create_inline_query(self, request: web.Request) -> web.Response:

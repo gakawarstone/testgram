@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +11,7 @@ from .errors import ScenarioError
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-    from testgram.client import TestgramClient
+    from testgram.client import ClickResult, TestgramClient
 
 
 MEDIA_METHODS = {
@@ -170,9 +171,13 @@ class ApiExpectation:
     params: dict[str, Any]
     response: dict[str, Any]
     timeout: float
+    latency_from: str | None = None
+    latency_within: float | None = None
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any], default_timeout: float) -> ApiExpectation:
+    def from_payload(
+        cls, payload: dict[str, Any], default_timeout: float
+    ) -> ApiExpectation:
         method = payload.get("method")
         if not isinstance(method, str) or not method:
             raise ScenarioError("expect_api.method must be a non-empty string")
@@ -183,9 +188,35 @@ class ApiExpectation:
         if not isinstance(response, dict):
             raise ScenarioError("expect_api.response must be a mapping")
         timeout = float(payload.get("timeout", default_timeout))
-        if timeout < 0:
-            raise ScenarioError("expect_api.timeout must be non-negative")
-        return cls(method=method, params=params, response=response, timeout=timeout)
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ScenarioError("expect_api.timeout must be non-negative and finite")
+        latency = payload.get("latency")
+        latency_from = None
+        latency_within = None
+        if "latency" in payload:
+            if not isinstance(latency, dict):
+                raise ScenarioError("expect_api.latency must be a mapping")
+            latency_from = latency.get("from")
+            if not isinstance(latency_from, str) or not latency_from:
+                raise ScenarioError("expect_api.latency.from must name a click")
+            within = latency.get("within")
+            if isinstance(within, bool) or not isinstance(within, (int, float)):
+                raise ScenarioError(
+                    "expect_api.latency.within must be a non-negative number"
+                )
+            latency_within = float(within)
+            if not math.isfinite(latency_within) or latency_within < 0:
+                raise ScenarioError(
+                    "expect_api.latency.within must be a non-negative number"
+                )
+        return cls(
+            method=method,
+            params=params,
+            response=response,
+            timeout=timeout,
+            latency_from=latency_from,
+            latency_within=latency_within,
+        )
 
     def matches(self, event: dict[str, Any]) -> bool:
         if event.get("type") != "bot_api_request":
@@ -207,7 +238,11 @@ class ApiExpectation:
         session: ClientSession,
         scenario_start_events: int,
         after_boundary: int | None = None,
+        after_server_id: str | None = None,
+        latency_action: ClickResult | None = None,
     ) -> tuple[int, dict[str, Any]] | None:
+        if self.latency_from is not None and latency_action is None:
+            raise ScenarioError("expect_api.latency.from requires a resolved click")
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
             events = await client.get_events(session)
@@ -216,9 +251,23 @@ class ApiExpectation:
             ):
                 sequence = event.get("payload", {}).get("sequence")
                 after_action = after_boundary is None or (
-                    isinstance(sequence, int) and sequence > after_boundary
+                    event.get("payload", {}).get("server_id") == after_server_id
+                    and isinstance(sequence, int)
+                    and sequence > after_boundary
                 )
-                if after_action and self.matches(event):
+                call = event.get("payload", {})
+                received = call.get("received_monotonic")
+                within_latency = latency_action is None or (
+                    call.get("server_id") == latency_action.server_id
+                    and isinstance(sequence, int)
+                    and sequence > latency_action.boundary
+                    and isinstance(received, (int, float))
+                    and self.latency_within is not None
+                    and 0
+                    <= received - latency_action.queued_monotonic
+                    <= self.latency_within
+                )
+                if after_action and within_latency and self.matches(event):
                     return index, event
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
@@ -226,7 +275,12 @@ class ApiExpectation:
             await asyncio.sleep(min(0.05, remaining))
 
     def describe(self) -> str:
-        return f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
+        description = f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
+        if self.latency_from is not None:
+            description += (
+                f", latency from {self.latency_from!r} within {self.latency_within:g}s"
+            )
+        return description
 
 
 def api_value_matches(expected: Any, actual: Any, *, form_values: bool = False) -> bool:
