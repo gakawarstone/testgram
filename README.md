@@ -227,6 +227,34 @@ fields accepted by `expect`:
 
 `message_id` can still restrict the search when the ID is known.
 
+Give a click a `name` to refer to the injected update and the selected message
+in a later API check:
+
+```yaml
+- click:
+    name: remove_a
+    button_text: Убрать
+    message: {text_contains: 'Запись A'}
+    wait_consumed: false
+- expect_api:
+    after: remove_a
+    method: deleteMessage
+    params:
+      chat_id: '${actions.remove_a.chat_id}'
+      message_id: '${actions.remove_a.message_id}'
+    response: {ok: true, result: true}
+    timeout: 5
+```
+
+Names are unique within a scenario and must begin with a letter or underscore;
+the remaining characters may also include digits and hyphens. References can
+use `update_id`, `chat_id`, or `message_id` in `expect_api.params` and
+`expect_api.response`, including nested mappings and lists. A reference must
+occupy the whole value and retains its numeric type. Unknown names, unsupported
+fields, and duplicate names fail the scenario. The Python `client.click` still
+returns the source event index; `client.click_with_result` also returns the
+update ID, chat ID, message ID, and action boundary.
+
 `expect` supports structured bot-message fields in addition to `method`, `text`,
 and `text_contains`: `reply_markup`, `callback_data`, `media_type`, `filename`,
 `duration`, `caption`, `parse_mode`, and `chat_id`. Use the one-based `order`
@@ -262,9 +290,13 @@ also match their string form in form-encoded requests. Other scalar values must
 match in type and value. The default timeout is the scenario timeout; zero
 checks existing events once. The search includes all chats and recorded calls
 since the scenario started, including calls before this step. Repeated checks
-may match the same call. It does not consume message expectations or establish
-an ordering relative to actions. The call is recorded after the fake API method
-finishes, and does not establish that the bot's handler has finished.
+may match the same call. It does not consume message expectations. With
+`after: <click name>`, only requests accepted after that callback was queued
+can match. Acceptance happens after Testgram reads the request parameters and
+before it runs the fake API method. Calls are recorded when that method
+finishes, so a call made while the click waits for consumption can still match.
+Neither an API response nor update consumption proves that the bot's handler
+has finished. Without `after`, the check retains its scenario-wide search.
 
 Chat-wide assertions can verify a sequence (unrelated messages may appear
 between the listed matches):
