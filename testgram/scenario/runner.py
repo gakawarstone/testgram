@@ -6,7 +6,7 @@ from testgram.client import TestgramClient
 
 from .actions import ClickAction, InlineQueryAction, SendAction, UpdateAction
 from .errors import ScenarioError, require_mapping
-from .expectations import ChatExpectation, Expectation, NoneExpectation
+from .expectations import ApiExpectation, ChatExpectation, Expectation, NoneExpectation
 from .models import Scenario, ScenarioStep
 
 
@@ -124,6 +124,27 @@ class ScenarioRunner:
             event_index, event = match
             print(f"{step_number}. bot: {self._client.format_bot_reply(event)}")
             return event_index + 1
+
+        if "expect_api" in step_payload:
+            expectation = ApiExpectation.from_payload(
+                require_mapping(
+                    step_payload["expect_api"], "expect_api", self._scenario.path, step.line
+                ),
+                self._scenario.timeout,
+            )
+            match = await expectation.wait_for_match(
+                client=self._client,
+                session=session,
+                scenario_start_events=scenario_start_events,
+            )
+            if match is None:
+                raise ScenarioError(
+                    f"{step_number}. expect_api failed: {expectation.describe()}",
+                    path=self._scenario.path,
+                    line=step.line,
+                )
+            print(f"{step_number}. api: {expectation.describe()}")
+            return seen_events
 
         if "expect_none" in step_payload:
             expectation = NoneExpectation.from_payload(

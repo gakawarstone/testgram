@@ -165,6 +165,80 @@ class Expectation:
 
 
 @dataclass(slots=True)
+class ApiExpectation:
+    method: str
+    params: dict[str, Any]
+    response: dict[str, Any]
+    timeout: float
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any], default_timeout: float) -> ApiExpectation:
+        method = payload.get("method")
+        if not isinstance(method, str) or not method:
+            raise ScenarioError("expect_api.method must be a non-empty string")
+        params = payload.get("params", {})
+        response = payload.get("response", {})
+        if not isinstance(params, dict):
+            raise ScenarioError("expect_api.params must be a mapping")
+        if not isinstance(response, dict):
+            raise ScenarioError("expect_api.response must be a mapping")
+        timeout = float(payload.get("timeout", default_timeout))
+        if timeout < 0:
+            raise ScenarioError("expect_api.timeout must be non-negative")
+        return cls(method=method, params=params, response=response, timeout=timeout)
+
+    def matches(self, event: dict[str, Any]) -> bool:
+        if event.get("type") != "bot_api_request":
+            return False
+        call = event.get("payload")
+        if not isinstance(call, dict) or call.get("method") != self.method:
+            return False
+        response = call.get("response")
+        return (
+            isinstance(response, dict)
+            and response.get("ok") is True
+            and api_value_matches(self.params, call.get("payload"), form_values=True)
+            and api_value_matches(self.response, response)
+        )
+
+    async def wait_for_match(
+        self, client: TestgramClient, session: ClientSession, scenario_start_events: int
+    ) -> tuple[int, dict[str, Any]] | None:
+        deadline = asyncio.get_running_loop().time() + self.timeout
+        while True:
+            events = await client.get_events(session)
+            for index, event in enumerate(
+                events[scenario_start_events:], start=scenario_start_events
+            ):
+                if self.matches(event):
+                    return index, event
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(0.05, remaining))
+
+    def describe(self) -> str:
+        return f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
+
+
+def api_value_matches(expected: Any, actual: Any, *, form_values: bool = False) -> bool:
+    """Match mappings recursively as subsets and lists by position and length."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and api_value_matches(value, actual[key], form_values=form_values)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and len(expected) == len(actual) and all(
+            api_value_matches(left, right, form_values=form_values)
+            for left, right in zip(expected, actual)
+        )
+    if form_values and isinstance(actual, str) and type(expected) in (int, float):
+        return actual == str(expected)
+    return type(expected) is type(actual) and expected == actual
+
+
+@dataclass(slots=True)
 class NoneExpectation:
     """Assert that no matching bot request appears for the entire window."""
 
