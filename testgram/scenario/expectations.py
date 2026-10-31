@@ -196,6 +196,11 @@ class ApiExpectation:
         if "latency" in payload:
             if not isinstance(latency, dict):
                 raise ScenarioError("expect_api.latency must be a mapping")
+            unknown = latency.keys() - {"from", "within"}
+            if unknown:
+                raise ScenarioError(
+                    f"unknown expect_api.latency fields: {sorted(unknown, key=str)!r}"
+                )
             latency_from = latency.get("from")
             if not isinstance(latency_from, str) or not latency_from:
                 raise ScenarioError("expect_api.latency.from must name a click")

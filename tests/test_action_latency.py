@@ -225,6 +225,53 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
+    async def test_late_effect_during_consumption_wait_still_fails_budget(self) -> None:
+        async def bot() -> None:
+            update = (await self.call("getUpdates", {"timeout": 2}))["result"][-1]
+            await asyncio.sleep(0.12)
+            await self.call(
+                "deleteMessage",
+                {
+                    "chat_id": 42,
+                    "message_id": self.a["message_id"],
+                },
+            )
+            await self.call("getUpdates", {"offset": update["update_id"] + 1})
+
+        task = asyncio.create_task(bot())
+        try:
+            await self.client.wait_for_polling(self.session, timeout=1)
+            await self.step(self.click(wait_consumed=True))
+            await task
+            with self.assertRaisesRegex(ScenarioError, "expect_api failed"):
+                await self.step(self.expectation(within=0.04))
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_latency_without_after_excludes_requests_before_callback(
+        self,
+    ) -> None:
+        await self.call(
+            "deleteMessage",
+            {
+                "chat_id": 42,
+                "message_id": self.a["message_id"],
+            },
+        )
+        await self.step(self.click())
+        with self.assertRaisesRegex(ScenarioError, "expect_api failed"):
+            await self.step(self.expectation(after=None))
+        await self.call(
+            "deleteMessage",
+            {
+                "chat_id": 42,
+                "message_id": self.a["message_id"],
+            },
+        )
+        await self.step(self.expectation(after=None))
+
     async def test_other_server_identity_never_matches(self) -> None:
         await self.step(self.click())
         await self.call(
@@ -244,6 +291,7 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
             [],
             {},
             {"from": "missing", "within": 1},
+            {"from": "x", "within": 1, "withn": 2},
             {"from": "x", "within": -1},
             {"from": "x", "within": True},
             {"from": "x", "within": float("nan")},
