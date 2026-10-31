@@ -158,7 +158,9 @@ class ScenarioRunner:
                 if after is not None and (
                     not isinstance(after, str) or after not in self._actions
                 ):
-                    raise ScenarioError(f"unknown action in expect_api.after: {after!r}")
+                    raise ScenarioError(
+                        f"unknown action in expect_api.after: {after!r}"
+                    )
                 resolved = dict(payload)
                 for key in ("params", "response"):
                     if key in resolved:
@@ -166,6 +168,11 @@ class ScenarioRunner:
                 expectation = ApiExpectation.from_payload(
                     resolved, self._scenario.timeout
                 )
+                latency_from = expectation.latency_from
+                if latency_from is not None and latency_from not in self._actions:
+                    raise ScenarioError(
+                        f"unknown action in expect_api.latency.from: {latency_from!r}"
+                    )
             except ScenarioError as error:
                 raise ScenarioError(
                     f"{step_number}. {error}", path=self._scenario.path, line=step.line
@@ -176,6 +183,12 @@ class ScenarioRunner:
                 scenario_start_events=scenario_start_events,
                 after_boundary=(
                     self._actions[after].boundary if after is not None else None
+                ),
+                after_server_id=(
+                    self._actions[after].server_id if after is not None else None
+                ),
+                latency_action=(
+                    self._actions[latency_from] if latency_from is not None else None
                 ),
             )
             if match is None:

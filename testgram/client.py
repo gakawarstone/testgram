@@ -38,6 +38,8 @@ class ClickResult:
     chat_id: int
     message_id: int
     boundary: int
+    server_id: str
+    queued_monotonic: float
 
 
 class TestgramClient:
@@ -240,6 +242,8 @@ class TestgramClient:
             chat_id=int(payload["chat_id"]),
             message_id=int(source_message["message_id"]),
             boundary=int(update["testgram_action_boundary"]),
+            server_id=str(update["testgram_server_id"]),
+            queued_monotonic=float(update["testgram_queued_monotonic"]),
         )
 
     def _find_callback_source(
