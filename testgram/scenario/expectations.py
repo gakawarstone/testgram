@@ -202,7 +202,11 @@ class ApiExpectation:
         )
 
     async def wait_for_match(
-        self, client: TestgramClient, session: ClientSession, scenario_start_events: int
+        self,
+        client: TestgramClient,
+        session: ClientSession,
+        scenario_start_events: int,
+        after_boundary: int | None = None,
     ) -> tuple[int, dict[str, Any]] | None:
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
@@ -210,7 +214,11 @@ class ApiExpectation:
             for index, event in enumerate(
                 events[scenario_start_events:], start=scenario_start_events
             ):
-                if self.matches(event):
+                sequence = event.get("payload", {}).get("sequence")
+                after_action = after_boundary is None or (
+                    isinstance(sequence, int) and sequence > after_boundary
+                )
+                if after_action and self.matches(event):
                     return index, event
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
