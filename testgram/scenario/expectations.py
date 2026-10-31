@@ -134,32 +134,29 @@ class Expectation:
     ) -> tuple[int, dict[str, Any]] | None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.timeout
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return None
-            timeout = asyncio.timeout_at(deadline)
-            try:
-                async with timeout:
+        timeout = asyncio.timeout_at(deadline)
+        try:
+            async with timeout:
+                while loop.time() < deadline:
                     events = await client.get_events(session)
-            except TimeoutError:
-                if timeout.expired():
-                    return None
+                    bot_events = [
+                        (index, event)
+                        for index, event in enumerate(
+                            events[seen_events:], start=seen_events
+                        )
+                        if client.is_bot_reply(event)
+                    ]
+                    match = self.find_indexed_match(bot_events)
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    if match is not None:
+                        return match
+                    await asyncio.sleep(min(0.2, remaining))
+        except TimeoutError:
+            if not timeout.expired():
                 raise
-            if loop.time() >= deadline:
-                return None
-            bot_events = [
-                (index, event)
-                for index, event in enumerate(events[seen_events:], start=seen_events)
-                if client.is_bot_reply(event)
-            ]
-            match = self.find_indexed_match(bot_events)
-            if match is not None and loop.time() < deadline:
-                return match
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return None
-            await asyncio.sleep(min(0.2, remaining))
+        return None
 
     def find_indexed_match(
         self, events: list[tuple[int, dict[str, Any]]]
