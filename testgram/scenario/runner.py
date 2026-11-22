@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from aiohttp import ClientSession
 
+from testgram.bot_api_failure import BotApiFailure
 from testgram.client import TestgramClient
 
 from .actions import ClickAction, InlineQueryAction, SendAction, UpdateAction
@@ -17,6 +20,7 @@ class ScenarioRunner:
         self._reset = reset
 
     async def run(self, session: ClientSession) -> None:
+        failures = self._parse_failures()
         if self._reset:
             await self._client.reset(session)
 
@@ -24,16 +28,56 @@ class ScenarioRunner:
         scenario_start_events = seen_events
         print(f"scenario: {self._scenario.name}")
 
-        for step_number, step in enumerate(self._scenario.steps, start=1):
-            seen_events = await self._run_step(
-                session=session,
-                step_number=step_number,
-                step=step,
-                seen_events=seen_events,
-                scenario_start_events=scenario_start_events,
+        run_id = uuid4().hex
+        unused = []
+        try:
+            for step_number, step in enumerate(self._scenario.steps, start=1):
+                failure = failures.get(step_number)
+                if failure is not None:
+                    print(
+                        f"{step_number}. fail next {failure.method} ({failure.error_code})"
+                    )
+                    await self._client.schedule_failure(
+                        session, run_id, step_number, failure
+                    )
+                    continue
+                seen_events = await self._run_step(
+                    session=session,
+                    step_number=step_number,
+                    step=step,
+                    seen_events=seen_events,
+                    scenario_start_events=scenario_start_events,
+                )
+        finally:
+            if failures:
+                unused = await self._client.finish_failures(session, run_id)
+
+        if unused:
+            step_number = unused[0]
+            raise ScenarioError(
+                f"{step_number}. unused fail_next rule for {failures[step_number].method}",
+                path=self._scenario.path,
+                line=self._scenario.steps[step_number - 1].line,
             )
 
         print("scenario passed")
+
+    def _parse_failures(self) -> dict[int, BotApiFailure]:
+        failures = {}
+        for step_number, step in enumerate(self._scenario.steps, start=1):
+            if "fail_next" not in step.payload:
+                continue
+            try:
+                if len(step.payload) != 1:
+                    raise ValueError("fail_next must be the only action in its step")
+                failures[step_number] = BotApiFailure.from_payload(
+                    step.payload["fail_next"]
+                )
+            except ValueError as error:
+                raise ScenarioError(
+                    str(error), path=self._scenario.path, line=step.line
+                ) from error
+        return failures
 
     async def _run_step(
         self,

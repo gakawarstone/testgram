@@ -5,6 +5,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.web_request import FileField
 
+from .bot_api_failure import BotApiFailure
 from .console import EventLogger
 from .storage import MemoryStorage
 
@@ -13,20 +14,28 @@ class TelegramApi:
     def __init__(self, storage: MemoryStorage, logger: EventLogger) -> None:
         self._storage = storage
         self._logger = logger
+        self._pending_failures: dict[tuple[str, int], BotApiFailure] = {}
 
     async def handle_method(self, request: web.Request) -> web.Response:
         token = request.match_info["token"]
         method = request.match_info["method"]
         payload = await self._read_payload(request)
 
-        handler = getattr(self, f"_method_{method}", None)
-        if handler is None:
+        failure = self._take_failure(method)
+        if failure is not None:
+            status = failure.error_code
             response_payload = {
                 "ok": False,
-                "error_code": 404,
+                "error_code": status,
+                "description": failure.description,
+            }
+        elif (handler := getattr(self, f"_method_{method}", None)) is None:
+            status = 404
+            response_payload = {
+                "ok": False,
+                "error_code": status,
                 "description": "Not Found",
             }
-            status = 404
         else:
             result = await handler(payload)
             response_payload = {"ok": True, "result": result}
@@ -44,6 +53,29 @@ class TelegramApi:
         await self._storage.add_event(event)
 
         return web.json_response(response_payload, status=status)
+
+    def _take_failure(self, method: str) -> BotApiFailure | None:
+        # Select and remove without yielding to another request on the event loop.
+        for key, failure in self._pending_failures.items():
+            if failure.method == method:
+                return self._pending_failures.pop(key)
+        return None
+
+    async def schedule_failure(self, request: web.Request) -> web.Response:
+        try:
+            failure = BotApiFailure.from_payload(await request.json())
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
+        key = (request.match_info["run_id"], int(request.match_info["step"]))
+        self._pending_failures[key] = failure
+        return self._ok(True)
+
+    async def finish_failures(self, request: web.Request) -> web.Response:
+        run_id = request.match_info["run_id"]
+        unused = [step for owner, step in self._pending_failures if owner == run_id]
+        for step in unused:
+            del self._pending_failures[run_id, step]
+        return self._ok(unused)
 
     async def create_message(self, request: web.Request) -> web.Response:
         payload = await request.json()
