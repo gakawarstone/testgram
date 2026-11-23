@@ -305,8 +305,9 @@ are not message replies:
     timeout: 2
 ```
 
-`method` is required. `params` and `response` are optional mappings; the
-response is the full Bot API envelope. A call matches only if its response has
+`method` is required. Unknown `expect_api` fields are rejected. `params` and
+`response` are optional mappings. The response is the full Bot API envelope.
+A call matches only if its response has
 `ok: true`, even when `response` is omitted. Mapping fields match recursively
 as subsets, and lists match by length and position. Numeric parameter values
 also match their string form in form-encoded requests. Other scalar values must

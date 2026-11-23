@@ -178,6 +178,13 @@ class ApiExpectation:
     def from_payload(
         cls, payload: dict[str, Any], default_timeout: float
     ) -> ApiExpectation:
+        unknown = payload.keys() - {
+            "method", "params", "response", "timeout", "after", "latency"
+        }
+        if unknown:
+            raise ScenarioError(
+                f"unknown expect_api fields: {sorted(unknown, key=str)!r}"
+            )
         method = payload.get("method")
         if not isinstance(method, str) or not method:
             raise ScenarioError("expect_api.method must be a non-empty string")

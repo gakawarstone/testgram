@@ -235,6 +235,23 @@ steps:
             await self.step(click)
         self.assertEqual(updates_before, await self.call("getUpdates", {}))
 
+    async def test_unknown_api_fields_fail_instead_of_matching_unrestricted_call(self) -> None:
+        await self.call("getMe", {})
+        for field, value in (
+            ("afetr", "remove_a"),
+            ("latnecy", {"from": "remove_a", "within": 0.3}),
+        ):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(
+                    ScenarioError,
+                    rf"scenario\.yaml:9: .*unknown expect_api fields:.*{field}",
+                ),
+            ):
+                await self.step(
+                    {"expect_api": {"method": "getMe", "timeout": 0, field: value}}
+                )
+
     async def test_references_preserve_numeric_type_in_nested_response(self) -> None:
         await self.messages()
         await self.step(
