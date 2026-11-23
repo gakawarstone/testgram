@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 from typing import Any
 
 from .models import (
@@ -15,6 +17,7 @@ from .models import (
 
 class MemoryStorage:
     def __init__(self) -> None:
+        self.server_id = uuid.uuid4().hex
         self._condition = asyncio.Condition()
         self._polling_count = 0
         self._events: list[dict[str, Any]] = []
@@ -40,12 +43,12 @@ class MemoryStorage:
         async with self._condition:
             return list(self._events)
 
-    async def accept_api_request(self) -> int:
+    async def accept_api_request(self) -> tuple[int, float]:
         # Share the callback enqueue lock so acceptance and action boundaries
         # have a definite order even when an API handler finishes later.
         async with self._condition:
             self._action_sequence += 1
-            return self._action_sequence
+            return self._action_sequence, time.monotonic()
 
     async def create_user_message(
         self,
@@ -100,7 +103,7 @@ class MemoryStorage:
         username: str = "test_user",
         first_name: str = "Test",
         user_payload: dict[str, Any] | None = None,
-    ) -> tuple[FakeUpdate, int]:
+    ) -> tuple[FakeUpdate, int, float]:
         async with self._condition:
             callback_query = FakeCallbackQuery(
                 id=f"testgram-callback-{self._next_update_id}",
@@ -120,10 +123,11 @@ class MemoryStorage:
             )
             self._next_update_id += 1
             self._updates.append(update)
+            queued_at = time.monotonic()
             self._action_sequence += 1
             boundary = self._action_sequence
             self._condition.notify_all()
-            return update, boundary
+            return update, boundary, queued_at
 
     async def create_inline_query(
         self,

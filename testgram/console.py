@@ -11,12 +11,20 @@ class EventLogger:
         self._log_file = log_file
         self._quiet = quiet
 
-    async def write(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def write(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         event = {
             "time": datetime.now(tz=UTC).isoformat(),
             "type": event_type,
             "payload": self._json_safe(payload),
         }
+        if metadata is not None:
+            event["metadata"] = self._json_safe(metadata)
         line = json.dumps(event, ensure_ascii=False, sort_keys=True)
         if not self._quiet:
             print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True), flush=True)

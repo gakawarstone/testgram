@@ -243,6 +243,7 @@ in a later API check:
       chat_id: '${actions.remove_a.chat_id}'
       message_id: '${actions.remove_a.message_id}'
     response: {ok: true, result: true}
+    latency: {from: remove_a, within: 0.3}
     timeout: 5
 ```
 
@@ -254,6 +255,28 @@ occupy the whole value and retains its numeric type. Unknown names, unsupported
 fields, and duplicate names fail the scenario. The Python `client.click` still
 returns the source event index; `client.click_with_result` also returns the
 update ID, chat ID, message ID, and action boundary.
+
+The optional `latency` check measures seconds from the named click's callback
+being queued to the fake API receiving the matching request. It uses monotonic
+timestamps taken by the same server, after request parameters are read and
+before the fake method runs. The example's 0.3 seconds is illustrative; choose
+and calibrate a budget for your CI environment. `wait_consumed` does not change
+this budget: consumption is confirmed by a later `getUpdates` with a larger
+offset, and does not mean the bot's handler has finished. `timeout` separately
+limits how long the expectation waits for a completed matching request with a
+successful response. A request received within budget may therefore complete
+later, within that wait. Zero timeout checks the completed calls already logged.
+
+The method, message identifiers and timing establish an observable correlation,
+not proof of internal causation. The UTC event log is retained; callback and
+API events also contain monotonic timestamps and a server instance ID. Compare
+monotonic timestamps only within the same server instance.
+
+For the gkbot case, a meaningful external fixture must create messages A and B
+with the same button and exercise A while real heavy processing of B runs in
+the same bot process. It must also show the old version failing and the fixed
+version passing. A sleeping HTTP request is not a substitute for that load;
+Testgram's own tests do not establish those external results.
 
 `expect` supports structured bot-message fields in addition to `method`, `text`,
 and `text_contains`: `reply_markup`, `callback_data`, `media_type`, `filename`,
