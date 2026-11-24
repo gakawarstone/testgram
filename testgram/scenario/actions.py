@@ -11,7 +11,7 @@ from .expectations import MessageMatcher
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-    from testgram.client import TestgramClient
+    from testgram.client import ClickResult, TestgramClient
 
 
 @dataclass(slots=True)
@@ -151,8 +151,13 @@ class ClickAction:
         )
 
     async def run(self, client: TestgramClient, session: ClientSession) -> int:
+        return (await self.run_with_result(client, session)).source_event
+
+    async def run_with_result(
+        self, client: TestgramClient, session: ClientSession
+    ) -> ClickResult:
         try:
-            return await client.click(
+            return await client.click_with_result(
                 session,
                 callback_data=self.callback_data,
                 message_id=self.message_id,
