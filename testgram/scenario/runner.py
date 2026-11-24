@@ -154,13 +154,6 @@ class ScenarioRunner:
                 step_payload["expect_api"], "expect_api", self._scenario.path, step.line
             )
             try:
-                after = payload.get("after")
-                if after is not None and (
-                    not isinstance(after, str) or after not in self._actions
-                ):
-                    raise ScenarioError(
-                        f"unknown action in expect_api.after: {after!r}"
-                    )
                 resolved = dict(payload)
                 for key in ("params", "response"):
                     if key in resolved:
@@ -168,10 +161,11 @@ class ScenarioRunner:
                 expectation = ApiExpectation.from_payload(
                     resolved, self._scenario.timeout
                 )
-                latency_from = expectation.latency_from
-                if latency_from is not None and latency_from not in self._actions:
+                after = expectation.after
+                after_action = self._actions.get(after) if after is not None else None
+                if after is not None and after_action is None:
                     raise ScenarioError(
-                        f"unknown action in expect_api.latency.from: {latency_from!r}"
+                        f"unknown action in expect_api.after: {after!r}"
                     )
             except ScenarioError as error:
                 raise ScenarioError(
@@ -181,15 +175,7 @@ class ScenarioRunner:
                 client=self._client,
                 session=session,
                 scenario_start_events=scenario_start_events,
-                after_boundary=(
-                    self._actions[after].boundary if after is not None else None
-                ),
-                after_server_id=(
-                    self._actions[after].server_id if after is not None else None
-                ),
-                latency_action=(
-                    self._actions[latency_from] if latency_from is not None else None
-                ),
+                after_action=after_action,
             )
             if match is None:
                 raise ScenarioError(

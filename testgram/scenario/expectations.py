@@ -171,15 +171,15 @@ class ApiExpectation:
     params: dict[str, Any]
     response: dict[str, Any]
     timeout: float
-    latency_from: str | None = None
-    latency_within: float | None = None
+    after: str | None = None
+    within: float | None = None
 
     @classmethod
     def from_payload(
         cls, payload: dict[str, Any], default_timeout: float
     ) -> ApiExpectation:
         unknown = payload.keys() - {
-            "method", "params", "response", "timeout", "after", "latency"
+            "method", "params", "response", "timeout", "after", "within"
         }
         if unknown:
             raise ScenarioError(
@@ -197,37 +197,30 @@ class ApiExpectation:
         timeout = float(payload.get("timeout", default_timeout))
         if not math.isfinite(timeout) or timeout < 0:
             raise ScenarioError("expect_api.timeout must be non-negative and finite")
-        latency = payload.get("latency")
-        latency_from = None
-        latency_within = None
-        if "latency" in payload:
-            if not isinstance(latency, dict):
-                raise ScenarioError("expect_api.latency must be a mapping")
-            unknown = latency.keys() - {"from", "within"}
-            if unknown:
-                raise ScenarioError(
-                    f"unknown expect_api.latency fields: {sorted(unknown, key=str)!r}"
-                )
-            latency_from = latency.get("from")
-            if not isinstance(latency_from, str) or not latency_from:
-                raise ScenarioError("expect_api.latency.from must name a click")
-            within = latency.get("within")
-            if isinstance(within, bool) or not isinstance(within, (int, float)):
-                raise ScenarioError(
-                    "expect_api.latency.within must be a non-negative number"
-                )
-            latency_within = float(within)
-            if not math.isfinite(latency_within) or latency_within < 0:
-                raise ScenarioError(
-                    "expect_api.latency.within must be a non-negative number"
-                )
+        after = payload.get("after")
+        if "after" in payload and (not isinstance(after, str) or not after):
+            raise ScenarioError("expect_api.after must name a click")
+        within = None
+        if "within" in payload:
+            if after is None:
+                raise ScenarioError("expect_api.within requires after")
+            raw_within = payload["within"]
+            error = "expect_api.within must be a finite, non-negative number"
+            if isinstance(raw_within, bool) or not isinstance(raw_within, (int, float)):
+                raise ScenarioError(error)
+            try:
+                within = float(raw_within)
+            except OverflowError as exc:
+                raise ScenarioError(error) from exc
+            if not math.isfinite(within) or within < 0:
+                raise ScenarioError(error)
         return cls(
             method=method,
             params=params,
             response=response,
             timeout=timeout,
-            latency_from=latency_from,
-            latency_within=latency_within,
+            after=after,
+            within=within,
         )
 
     def matches(self, event: dict[str, Any]) -> bool:
@@ -249,49 +242,52 @@ class ApiExpectation:
         client: TestgramClient,
         session: ClientSession,
         scenario_start_events: int,
-        after_boundary: int | None = None,
-        after_server_id: str | None = None,
-        latency_action: ClickResult | None = None,
+        *,
+        after_action: ClickResult | None = None,
     ) -> tuple[int, dict[str, Any]] | None:
-        if self.latency_from is not None and latency_action is None:
-            raise ScenarioError("expect_api.latency.from requires a resolved click")
+        if (self.after is not None or self.within is not None) and after_action is None:
+            raise ScenarioError("expect_api.after requires a resolved click")
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
             events = await client.get_events(session)
             for index, event in enumerate(
                 events[scenario_start_events:], start=scenario_start_events
             ):
-                sequence = event.get("payload", {}).get("sequence")
-                after_action = after_boundary is None or (
-                    event.get("payload", {}).get("server_id") == after_server_id
-                    and isinstance(sequence, int)
-                    and sequence > after_boundary
-                )
-                call = event.get("payload", {})
-                received = call.get("received_monotonic")
-                within_latency = latency_action is None or (
-                    call.get("server_id") == latency_action.server_id
-                    and isinstance(sequence, int)
-                    and sequence > latency_action.boundary
-                    and isinstance(received, (int, float))
-                    and self.latency_within is not None
-                    and 0
-                    <= received - latency_action.queued_monotonic
-                    <= self.latency_within
-                )
-                if after_action and within_latency and self.matches(event):
+                if not self.matches(event):
+                    continue
+                if after_action is None or self._matches_after(
+                    event["payload"], after_action
+                ):
                     return index, event
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return None
             await asyncio.sleep(min(0.05, remaining))
 
+    def _matches_after(self, call: dict[str, Any], action: ClickResult) -> bool:
+        sequence = call.get("sequence")
+        if (
+            call.get("server_id") != action.server_id
+            or not isinstance(sequence, int)
+            or sequence <= action.boundary
+        ):
+            return False
+        if self.within is None:
+            return True
+        received = call.get("received_monotonic")
+        return (
+            isinstance(received, (int, float))
+            and 0 <= received - action.queued_monotonic <= self.within
+        )
+
     def describe(self) -> str:
-        description = f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
-        if self.latency_from is not None:
-            description += (
-                f", latency from {self.latency_from!r} within {self.latency_within:g}s"
-            )
+        description = (
+            f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
+        )
+        if self.after is not None:
+            description += f", after {self.after!r}"
+        if self.within is not None:
+            description += f" within {self.within:g}s"
         return description
 
 

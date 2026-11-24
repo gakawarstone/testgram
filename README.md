@@ -243,7 +243,7 @@ in a later API check:
       chat_id: '${actions.remove_a.chat_id}'
       message_id: '${actions.remove_a.message_id}'
     response: {ok: true, result: true}
-    latency: {from: remove_a, within: 0.3}
+    within: 0.3
     timeout: 5
 ```
 
@@ -256,16 +256,22 @@ fields, and duplicate names fail the scenario. The Python `client.click` still
 returns the source event index; `client.click_with_result` also returns the
 update ID, chat ID, message ID, and action boundary.
 
-The optional `latency` check measures seconds from the named click's callback
-being queued to the fake API receiving the matching request. It uses monotonic
-timestamps taken by the same server, after request parameters are read and
-before the fake method runs. The example's 0.3 seconds is illustrative; choose
-and calibrate a budget for your CI environment. `wait_consumed` does not change
-this budget: consumption is confirmed by a later `getUpdates` with a larger
-offset, and does not mean the bot's handler has finished. `timeout` separately
-limits how long the expectation waits for a completed matching request with a
-successful response. A request received within budget may therefore complete
-later, within that wait. Zero timeout checks the completed calls already logged.
+`after` names the click and limits the search to requests accepted after its
+callback was queued. Add `within` to set a maximum delay in seconds from that
+point to the fake API accepting the matching request. `within` requires `after`
+and accepts finite, non-negative numbers. The same server takes both monotonic
+timestamps. It timestamps request acceptance after reading the parameters and
+before running the fake API method.
+
+Choose a budget for your CI environment. `wait_consumed` does not change the
+budget. Consumption is confirmed by a later `getUpdates` with a larger offset.
+`timeout` separately controls how long the expectation waits for a completed
+matching request with a successful response. A request accepted within budget
+may complete later, within that wait. Zero timeout checks the completed calls
+already logged.
+
+To migrate `latency: {from: remove_a, within: 0.3}`, use `after: remove_a`
+and `within: 0.3` at the same level as `method`.
 
 The method, message identifiers and timing establish an observable correlation,
 not proof of internal causation. The UTC event log is retained; callback and

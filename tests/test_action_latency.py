@@ -93,7 +93,7 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
                     "message_id": "${actions.remove_a.message_id}",
                 },
                 "response": {"ok": True, "result": True},
-                "latency": {"from": "remove_a", "within": within},
+                "within": within,
                 "timeout": timeout,
                 **extra,
             }
@@ -146,7 +146,7 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
         await self.call(
             "deleteMessage", {"chat_id": 42, "message_id": self.a["message_id"]}
         )
-        with self.assertRaisesRegex(ScenarioError, "latency from 'remove_a'"):
+        with self.assertRaisesRegex(ScenarioError, "after 'remove_a' within 0.04s"):
             await self.step(self.expectation(within=0.04, timeout=0.1))
 
     async def test_effect_during_wait_consumed_preserves_message_expectations(
@@ -250,27 +250,24 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-    async def test_latency_without_after_excludes_requests_before_callback(
-        self,
-    ) -> None:
-        await self.call(
-            "deleteMessage",
-            {
-                "chat_id": 42,
-                "message_id": self.a["message_id"],
-            },
-        )
+    async def test_after_selects_the_named_click_for_the_latency_window(self) -> None:
         await self.step(self.click())
-        with self.assertRaisesRegex(ScenarioError, "expect_api failed"):
-            await self.step(self.expectation(after=None))
         await self.call(
-            "deleteMessage",
-            {
-                "chat_id": 42,
-                "message_id": self.a["message_id"],
-            },
+            "deleteMessage", {"chat_id": 42, "message_id": self.a["message_id"]}
         )
-        await self.step(self.expectation(after=None))
+        await self.step(
+            {
+                "click": {
+                    "name": "remove_b",
+                    "button_text": "Убрать",
+                    "message": {"text": "B"},
+                    "wait_consumed": False,
+                }
+            }
+        )
+        await self.step(self.expectation())
+        with self.assertRaisesRegex(ScenarioError, "after 'remove_b'"):
+            await self.step(self.expectation(after="remove_b"))
 
     async def test_other_server_identity_never_matches(self) -> None:
         await self.step(self.click())
@@ -279,26 +276,39 @@ class ActionLatencyTests(unittest.IsolatedAsyncioTestCase):
         )
         action = self.runner._actions["remove_a"]
         self.runner._actions["remove_a"] = replace(action, server_id="other server")
+        check = self.expectation()
         with self.assertRaisesRegex(ScenarioError, "expect_api failed"):
-            await self.step(self.expectation())
-        # Also protect latency-only assertions, without an explicit after clause.
+            await self.step(check)
+        del check["expect_api"]["within"]
         with self.assertRaisesRegex(ScenarioError, "expect_api failed"):
-            await self.step(self.expectation(after=None))
+            await self.step(check)
 
-    async def test_invalid_latency_is_reported_with_location(self) -> None:
-        for latency in (
-            None,
-            [],
-            {},
-            {"from": "missing", "within": 1},
-            {"from": "x", "within": 1, "withn": 2},
-            {"from": "x", "within": -1},
-            {"from": "x", "within": True},
-            {"from": "x", "within": float("nan")},
-            {"from": "x", "within": float("inf")},
+    async def test_invalid_action_window_is_reported_with_location(self) -> None:
+        await self.step(self.click())
+        for fields, error in (
+            ({"within": 1}, "expect_api.within requires after"),
+            ({"after": None}, "expect_api.after must name a click"),
+            ({"after": "missing", "within": 1}, "unknown action in expect_api.after"),
+            (
+                {"latency": {"from": "remove_a", "within": 1}},
+                "unknown expect_api fields",
+            ),
+            *(
+                ({"after": "remove_a", "within": value}, "expect_api.within must be")
+                for value in (
+                    None,
+                    [],
+                    "1",
+                    -1,
+                    True,
+                    float("nan"),
+                    float("inf"),
+                    10**400,
+                )
+            ),
         ):
             with (
-                self.subTest(latency=latency),
-                self.assertRaisesRegex(ScenarioError, "scenario.yaml:9"),
+                self.subTest(fields=fields),
+                self.assertRaisesRegex(ScenarioError, rf"scenario\.yaml:9: .*{error}"),
             ):
-                await self.step({"expect_api": {"method": "getMe", "latency": latency}})
+                await self.step({"expect_api": {"method": "getMe", **fields}})

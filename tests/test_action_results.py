@@ -159,6 +159,7 @@ steps:
       method: deleteMessage
       params: {chat_id: '${actions.remove_a.chat_id}', message_id: '${actions.remove_a.message_id}'}
       response: {ok: true, result: true}
+      within: 1.0
       timeout: 0
   - expect: {text: done, order: 1}
   - expect: {text: later, order: 1}
@@ -235,11 +236,13 @@ steps:
             await self.step(click)
         self.assertEqual(updates_before, await self.call("getUpdates", {}))
 
-    async def test_unknown_api_fields_fail_instead_of_matching_unrestricted_call(self) -> None:
+    async def test_unknown_api_fields_fail_instead_of_matching_unrestricted_call(
+        self,
+    ) -> None:
         await self.call("getMe", {})
         for field, value in (
             ("afetr", "remove_a"),
-            ("latnecy", {"from": "remove_a", "within": 0.3}),
+            ("withn", 0.3),
         ):
             with (
                 self.subTest(field=field),
