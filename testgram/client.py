@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from aiohttp import ClientSession
+
+from .bot_api_failure import BotApiFailure
 
 
 BOT_MESSAGE_METHODS = {
@@ -59,6 +61,21 @@ class TestgramClient:
     async def reset(self, session: ClientSession) -> None:
         async with session.post(f"{self.base_url}/testgram/reset") as response:
             response.raise_for_status()
+
+    async def schedule_failure(
+        self, session: ClientSession, run_id: str, step: int, failure: BotApiFailure
+    ) -> None:
+        async with session.post(
+            f"{self.base_url}/testgram/fail-next/{run_id}/{step}", json=asdict(failure)
+        ) as response:
+            response.raise_for_status()
+
+    async def finish_failures(self, session: ClientSession, run_id: str) -> list[int]:
+        async with session.post(
+            f"{self.base_url}/testgram/fail-next/{run_id}/finish"
+        ) as response:
+            response.raise_for_status()
+            return (await response.json())["result"]
 
     async def get_events(self, session: ClientSession) -> list[dict[str, Any]]:
         async with session.get(f"{self.base_url}/testgram/events") as response:
@@ -323,7 +340,10 @@ class TestgramClient:
         if event.get("type") != "bot_api_request":
             return False
         payload = event.get("payload", {})
-        return payload.get("method") in BOT_MESSAGE_METHODS
+        return (
+            payload.get("method") in BOT_MESSAGE_METHODS
+            and payload.get("response", {}).get("ok") is not False
+        )
 
     def format_bot_reply(self, event: dict[str, Any]) -> str:
         payload = event["payload"]

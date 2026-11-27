@@ -88,6 +88,24 @@ updates; its `timeout` defaults to the scenario timeout.
 Control clients can query or long-poll the same state at
 `GET /testgram/updates/{update_id}/consumed?timeout=5`.
 
+Use `fail_next` before a user action to simulate a Bot API error. For example,
+if entering a book title normally edits a form, have Telegram reject that edit
+and check that the bot still asks for the author.
+
+```yaml
+- fail_next:
+    method: editMessageText
+    error_code: 400
+    description: "Bad Request: message can't be edited"
+- send: {text: "Дюна"}
+- expect: {method: sendMessage, text_contains: "Автор"}
+```
+
+The next request with that exact method name gets the configured HTTP status
+and Bot API error JSON. Use an integer status from 400 to 599. An unused rule
+fails the scenario at its YAML line. `expect_chat.no_errors` counts the
+injected response as an error.
+
 Assert that a matching reply does not occur during a complete observation
 window with `expect_none` (it never succeeds immediately):
 

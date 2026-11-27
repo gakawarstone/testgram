@@ -24,6 +24,12 @@ def create_app(log_file: Path | None = None, quiet: bool = False) -> web.Applica
     app.router.add_post("/testgram/callbacks", telegram_api.create_callback_query)
     app.router.add_post("/testgram/inline-queries", telegram_api.create_inline_query)
     app.router.add_post("/testgram/updates", telegram_api.create_raw_update)
+    app.router.add_post(
+        r"/testgram/fail-next/{run_id}/{step:\d+}", telegram_api.schedule_failure
+    )
+    app.router.add_post(
+        "/testgram/fail-next/{run_id}/finish", telegram_api.finish_failures
+    )
     app.router.add_post("/testgram/reset", telegram_api.reset)
     app.router.add_get("/testgram/health", telegram_api.health)
     app.router.add_get("/testgram/polling", telegram_api.polling_status)
