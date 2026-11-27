@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from aiohttp import ClientSession
@@ -28,6 +29,17 @@ BOT_MESSAGE_METHODS = {
 
 class BotEventMatcher(Protocol):
     def matches(self, event: dict[str, Any]) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ClickResult:
+    source_event: int
+    update_id: int
+    chat_id: int
+    message_id: int
+    boundary: int
+    server_id: str
+    queued_monotonic: float
 
 
 class TestgramClient:
@@ -162,6 +174,32 @@ class TestgramClient:
         message_matcher: BotEventMatcher | None = None,
         user: dict[str, Any] | None = None,
     ) -> int:
+        result = await self.click_with_result(
+            session,
+            callback_data,
+            message_id,
+            wait_consumed,
+            timeout,
+            callback_data_regex=callback_data_regex,
+            button_text=button_text,
+            message_matcher=message_matcher,
+            user=user,
+        )
+        return result.source_event
+
+    async def click_with_result(
+        self,
+        session: ClientSession,
+        callback_data: str | None = None,
+        message_id: int | None = None,
+        wait_consumed: bool = False,
+        timeout: float = 0,
+        *,
+        callback_data_regex: str | None = None,
+        button_text: str | None = None,
+        message_matcher: BotEventMatcher | None = None,
+        user: dict[str, Any] | None = None,
+    ) -> ClickResult:
         source = self._find_callback_source(
             await self.get_events(session),
             callback_data=callback_data,
@@ -198,7 +236,15 @@ class TestgramClient:
             await self.wait_for_update_consumed(
                 session, int(update["update_id"]), timeout
             )
-        return source_index
+        return ClickResult(
+            source_event=source_index,
+            update_id=int(update["update_id"]),
+            chat_id=int(payload["chat_id"]),
+            message_id=int(source_message["message_id"]),
+            boundary=int(update["testgram_action_boundary"]),
+            server_id=str(update["testgram_server_id"]),
+            queued_monotonic=float(update["testgram_queued_monotonic"]),
+        )
 
     def _find_callback_source(
         self,

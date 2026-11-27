@@ -227,6 +227,63 @@ fields accepted by `expect`:
 
 `message_id` can still restrict the search when the ID is known.
 
+Give a click a `name` to refer to the injected update and the selected message
+in a later API check:
+
+```yaml
+- click:
+    name: remove_a
+    button_text: Убрать
+    message: {text_contains: 'Запись A'}
+    wait_consumed: false
+- expect_api:
+    after: remove_a
+    method: deleteMessage
+    params:
+      chat_id: '${actions.remove_a.chat_id}'
+      message_id: '${actions.remove_a.message_id}'
+    response: {ok: true, result: true}
+    within: 0.3
+    timeout: 5
+```
+
+Names are unique within a scenario and must begin with a letter or underscore;
+the remaining characters may also include digits and hyphens. References can
+use `update_id`, `chat_id`, or `message_id` in `expect_api.params` and
+`expect_api.response`, including nested mappings and lists. A reference must
+occupy the whole value and retains its numeric type. Unknown names, unsupported
+fields, and duplicate names fail the scenario. The Python `client.click` still
+returns the source event index; `client.click_with_result` also returns the
+update ID, chat ID, message ID, and action boundary.
+
+`after` names the click and limits the search to requests accepted after its
+callback was queued. Add `within` to set a maximum delay in seconds from that
+point to the fake API accepting the matching request. `within` requires `after`
+and accepts finite, non-negative numbers. The same server takes both monotonic
+timestamps. It timestamps request acceptance after reading the parameters and
+before running the fake API method.
+
+Choose a budget for your CI environment. `wait_consumed` does not change the
+budget. Consumption is confirmed by a later `getUpdates` with a larger offset.
+`timeout` separately controls how long the expectation waits for a completed
+matching request with a successful response. A request accepted within budget
+may complete later, within that wait. Zero timeout checks the completed calls
+already logged.
+
+To migrate `latency: {from: remove_a, within: 0.3}`, use `after: remove_a`
+and `within: 0.3` at the same level as `method`.
+
+The method, message identifiers and timing establish an observable correlation,
+not proof of internal causation. The UTC event log is retained; callback and
+API events also contain monotonic timestamps and a server instance ID. Compare
+monotonic timestamps only within the same server instance.
+
+For the gkbot case, a meaningful external fixture must create messages A and B
+with the same button and exercise A while real heavy processing of B runs in
+the same bot process. It must also show the old version failing and the fixed
+version passing. A sleeping HTTP request is not a substitute for that load;
+Testgram's own tests do not establish those external results.
+
 `expect` supports structured bot-message fields in addition to `method`, `text`,
 and `text_contains`: `reply_markup`, `callback_data`, `media_type`, `filename`,
 `duration`, `caption`, `parse_mode`, and `chat_id`. Use the one-based `order`
@@ -247,6 +304,34 @@ field to require a particular next-message position:
 log. Messages already in the log are checked if time remains; a response received
 after the deadline cannot satisfy the expectation. A timeout of zero or less
 fails immediately.
+
+Use `expect_api` to check any recorded Bot API method, including methods that
+are not message replies:
+
+```yaml
+- expect_api:
+    method: deleteMessage
+    params: {chat_id: 42, message_id: 123}
+    response: {ok: true, result: true}
+    timeout: 2
+```
+
+`method` is required. Unknown `expect_api` fields are rejected. `params` and
+`response` are optional mappings. The response is the full Bot API envelope.
+A call matches only if its response has
+`ok: true`, even when `response` is omitted. Mapping fields match recursively
+as subsets, and lists match by length and position. Numeric parameter values
+also match their string form in form-encoded requests. Other scalar values must
+match in type and value. The default timeout is the scenario timeout; zero
+checks existing events once. The search includes all chats and recorded calls
+since the scenario started, including calls before this step. Repeated checks
+may match the same call. It does not consume message expectations. With
+`after: <click name>`, only requests accepted after that callback was queued
+can match. Acceptance happens after Testgram reads the request parameters and
+before it runs the fake API method. Calls are recorded when that method
+finishes, so a call made while the click waits for consumption can still match.
+Neither an API response nor update consumption proves that the bot's handler
+has finished. Without `after`, the check retains its scenario-wide search.
 
 Chat-wide assertions can verify a sequence (unrelated messages may appear
 between the listed matches):
