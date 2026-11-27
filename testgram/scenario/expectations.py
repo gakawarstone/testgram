@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +11,7 @@ from .errors import ScenarioError
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-    from testgram.client import TestgramClient
+    from testgram.client import ClickResult, TestgramClient
 
 
 MEDIA_METHODS = {
@@ -132,20 +133,31 @@ class Expectation:
         session: ClientSession,
         seen_events: int,
     ) -> tuple[int, dict[str, Any]] | None:
-        deadline = asyncio.get_running_loop().time() + self.timeout
-        while True:
-            events = await client.get_events(session)
-            bot_events = [
-                (index, event)
-                for index, event in enumerate(events[seen_events:], start=seen_events)
-                if client.is_bot_reply(event)
-            ]
-            match = self.find_indexed_match(bot_events)
-            if match is not None:
-                return match
-            if asyncio.get_running_loop().time() >= deadline:
-                return None
-            await asyncio.sleep(0.2)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout
+        timeout = asyncio.timeout_at(deadline)
+        try:
+            async with timeout:
+                while loop.time() < deadline:
+                    events = await client.get_events(session)
+                    bot_events = [
+                        (index, event)
+                        for index, event in enumerate(
+                            events[seen_events:], start=seen_events
+                        )
+                        if client.is_bot_reply(event)
+                    ]
+                    match = self.find_indexed_match(bot_events)
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    if match is not None:
+                        return match
+                    await asyncio.sleep(min(0.2, remaining))
+        except TimeoutError:
+            if not timeout.expired():
+                raise
+        return None
 
     def find_indexed_match(
         self, events: list[tuple[int, dict[str, Any]]]
@@ -162,6 +174,149 @@ class Expectation:
         if self.order is not None:
             description += f", order={self.order}"
         return description
+
+
+@dataclass(slots=True)
+class ApiExpectation:
+    method: str
+    params: dict[str, Any]
+    response: dict[str, Any]
+    timeout: float
+    after: str | None = None
+    within: float | None = None
+
+    @classmethod
+    def from_payload(
+        cls, payload: dict[str, Any], default_timeout: float
+    ) -> ApiExpectation:
+        unknown = payload.keys() - {
+            "method", "params", "response", "timeout", "after", "within"
+        }
+        if unknown:
+            raise ScenarioError(
+                f"unknown expect_api fields: {sorted(unknown, key=str)!r}"
+            )
+        method = payload.get("method")
+        if not isinstance(method, str) or not method:
+            raise ScenarioError("expect_api.method must be a non-empty string")
+        params = payload.get("params", {})
+        response = payload.get("response", {})
+        if not isinstance(params, dict):
+            raise ScenarioError("expect_api.params must be a mapping")
+        if not isinstance(response, dict):
+            raise ScenarioError("expect_api.response must be a mapping")
+        timeout = float(payload.get("timeout", default_timeout))
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ScenarioError("expect_api.timeout must be non-negative and finite")
+        after = payload.get("after")
+        if "after" in payload and (not isinstance(after, str) or not after):
+            raise ScenarioError("expect_api.after must name a click")
+        within = None
+        if "within" in payload:
+            if after is None:
+                raise ScenarioError("expect_api.within requires after")
+            raw_within = payload["within"]
+            error = "expect_api.within must be a finite, non-negative number"
+            if isinstance(raw_within, bool) or not isinstance(raw_within, (int, float)):
+                raise ScenarioError(error)
+            try:
+                within = float(raw_within)
+            except OverflowError as exc:
+                raise ScenarioError(error) from exc
+            if not math.isfinite(within) or within < 0:
+                raise ScenarioError(error)
+        return cls(
+            method=method,
+            params=params,
+            response=response,
+            timeout=timeout,
+            after=after,
+            within=within,
+        )
+
+    def matches(self, event: dict[str, Any]) -> bool:
+        if event.get("type") != "bot_api_request":
+            return False
+        call = event.get("payload")
+        if not isinstance(call, dict) or call.get("method") != self.method:
+            return False
+        response = call.get("response")
+        return (
+            isinstance(response, dict)
+            and response.get("ok") is True
+            and api_value_matches(self.params, call.get("payload"), form_values=True)
+            and api_value_matches(self.response, response)
+        )
+
+    async def wait_for_match(
+        self,
+        client: TestgramClient,
+        session: ClientSession,
+        scenario_start_events: int,
+        *,
+        after_action: ClickResult | None = None,
+    ) -> tuple[int, dict[str, Any]] | None:
+        if (self.after is not None or self.within is not None) and after_action is None:
+            raise ScenarioError("expect_api.after requires a resolved click")
+        deadline = asyncio.get_running_loop().time() + self.timeout
+        while True:
+            events = await client.get_events(session)
+            for index, event in enumerate(
+                events[scenario_start_events:], start=scenario_start_events
+            ):
+                if not self.matches(event):
+                    continue
+                if after_action is None or self._matches_after(
+                    event["payload"], after_action
+                ):
+                    return index, event
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(0.05, remaining))
+
+    def _matches_after(self, call: dict[str, Any], action: ClickResult) -> bool:
+        sequence = call.get("sequence")
+        if (
+            call.get("server_id") != action.server_id
+            or not isinstance(sequence, int)
+            or sequence <= action.boundary
+        ):
+            return False
+        if self.within is None:
+            return True
+        received = call.get("received_monotonic")
+        return (
+            isinstance(received, (int, float))
+            and 0 <= received - action.queued_monotonic <= self.within
+        )
+
+    def describe(self) -> str:
+        description = (
+            f"method={self.method!r}, params={self.params!r}, response={self.response!r}"
+        )
+        if self.after is not None:
+            description += f", after {self.after!r}"
+        if self.within is not None:
+            description += f" within {self.within:g}s"
+        return description
+
+
+def api_value_matches(expected: Any, actual: Any, *, form_values: bool = False) -> bool:
+    """Match mappings recursively as subsets and lists by position and length."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and api_value_matches(value, actual[key], form_values=form_values)
+            for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and len(expected) == len(actual) and all(
+            api_value_matches(left, right, form_values=form_values)
+            for left, right in zip(expected, actual)
+        )
+    if form_values and isinstance(actual, str) and type(expected) in (int, float):
+        return actual == str(expected)
+    return type(expected) is type(actual) and expected == actual
 
 
 @dataclass(slots=True)
